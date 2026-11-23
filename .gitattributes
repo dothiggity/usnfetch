@@ -1,0 +1,10 @@
+# text files are stored with LF line endings
+* text=auto eol=lf
+
+# binaries
+*.png binary
+*.ico binary
+*.syso binary
+
+# the catalog parser's test inputs must stay byte-for-byte as they are (CR, CRLF, legacy encodings)
+internal/catalog/testdata/** -text

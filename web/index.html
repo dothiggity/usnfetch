@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>usnfetch</title>
+<link rel="icon" type="image/png" id="favicon" href="/static/icon-idle.png">
+<link rel="stylesheet" href="/static/app.css">
+<script>/* the saved look, before the first paint (app.js keeps it in step) */
+try { const g = (k, d) => { const v = localStorage.getItem("usnf.ui." + k); return v == null ? d : JSON.parse(v); }, r = document.documentElement.dataset, t = g("theme", "dark");
+  r.layout = g("layout", "side"); r.density = g("density", "comfortable");
+  r.theme = t === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : t; } catch (e) {}</script>
+</head>
+<body>
+<div id="app">
+  <aside class="side">
+    <div class="brand">
+      <img class="logo" id="logo" src="/static/icon-idle.png" alt="">
+      <div>usnfetch<small id="ver">USN share manager</small></div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="basket hidden" id="basket"></div>
+    <div class="side-foot">
+      <div class="row"><span>Speed <small id="f-limit"></small></span><span class="sp"><b id="f-speed">—</b><button class="btn ghost icon xs" id="f-pause" title="Pause downloads"></button></span></div>
+      <div class="row"><span>Free</span><b id="f-free">—</b></div>
+      <div class="meter"><i id="f-meter" style="width:0"></i></div>
+    </div>
+  </aside>
+  <main>
+    <header class="top"><h1 id="title"></h1><div id="toolbar"></div></header>
+    <section id="view"></section>
+  </main>
+</div>
+<div id="modal-root"></div>
+<div id="toasts"></div>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

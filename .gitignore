@@ -1,0 +1,31 @@
+# usnfetch's own data when it runs from this folder: settings (with account passwords), job state,
+# catalog of share links, share indexes, downloads, logs. None of it belongs in the repository.
+/usnfetch_gui.json
+/usnfetch_gui.json.tmp
+/usnfetch.db
+/usnfetch.db-*
+/usnfetch.log
+/usnfetch.log.*
+/usnfetch_gui_state.json*
+/usnfetch_gui_state_done/
+/usnfetch_catalog.json
+/usnfetch_shareinfo.json
+/index_cache/
+/downloads/
+*.usnindex
+*.usnfetch
+/usn_links*.txt
+
+# builds
+/bin/
+/dist/
+
+# Python test harness
+__pycache__/
+*.pyc
+
+# editors, OS, local tool settings
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

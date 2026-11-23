@@ -1,0 +1,62 @@
+[
+ {
+  "link": "usn://AnVzZW5ldDovL20wMDAwYWJjZGVmZ2hpamtsbW5vcEBob3N0LngvMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAvYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSNiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi",
+  "title": "Legacy Title � broken",
+  "variant": "",
+  "listed": "2TB",
+  "size": 2000000000000,
+  "source": "legacy_bytes",
+  "sku": "",
+  "info": "",
+  "also": [],
+  "added": 0.0,
+  "job_name": "Legacy Title � broken",
+  "label": "Legacy Title � broken",
+  "haystack": "legacy title � broken  2tb legacy_bytes "
+ },
+ {
+  "link": "usn://AnVzZW5ldDovL20wMDAxYWJjZGVmZ2hpamtsbW5vcEBob3N0LngvMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEvYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSNiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi",
+  "title": "Lone CR Title",
+  "variant": "",
+  "listed": "",
+  "size": null,
+  "source": "legacy_bytes",
+  "sku": "",
+  "info": "",
+  "also": [],
+  "added": 0.0,
+  "job_name": "Lone CR Title",
+  "label": "Lone CR Title",
+  "haystack": "lone cr title   legacy_bytes "
+ },
+ {
+  "link": "usn://AnVzZW5ldDovL20wMDAyYWJjZGVmZ2hpamtsbW5vcEBob3N0LngvMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIvYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSNiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi",
+  "title": "Latin-1 caf� � bad emoji",
+  "variant": "",
+  "listed": "",
+  "size": null,
+  "source": "legacy_bytes",
+  "sku": "",
+  "info": "",
+  "also": [],
+  "added": 0.0,
+  "job_name": "Latin-1 caf� � bad emoji",
+  "label": "Latin-1 caf� � bad emoji",
+  "haystack": "latin-1 caf� � bad emoji   legacy_bytes "
+ },
+ {
+  "link": "usn://AnVzZW5ldDovL20wMDAzYWJjZGVmZ2hpamtsbW5vcEBob3N0LngvMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMvYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSNiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi",
+  "title": "���surrogate �� overlong",
+  "variant": "",
+  "listed": "",
+  "size": null,
+  "source": "legacy_bytes",
+  "sku": "",
+  "info": "",
+  "also": [],
+  "added": 0.0,
+  "job_name": "���surrogate �� overlong",
+  "label": "���surrogate �� overlong",
+  "haystack": "���surrogate �� overlong   legacy_bytes "
+ }
+]

@@ -1,0 +1,127 @@
+[
+ {
+  "link": "usenet://Y4qDvBNYm1ULi7kBtikH9Q@8e9aed4029.0b30+0S9cRlV4Yodr8wkOyBgdEA@f6149c5ba2.d83f/5575139d3d639aba9a278cac42d6bc93/c8bf4eedf3cf2967d05b778e377d4ae6d8c682e85e827c2a3955a6999444fa3b#b13404d646cefd5b0f5d33c88f96ce29911d10abcaa8c91a02f32fb9d46e5b12",
+  "manifest": {
+   "access": {
+    "folder_key_hex": "b13404d646cefd5b0f5d33c88f96ce29911d10abcaa8c91a02f32fb9d46e5b12",
+    "mode": "public"
+   },
+   "core_index": {
+    "encryption": "folder_key",
+    "parts": [
+     {
+      "part_number": 1,
+      "primary_msgid": "HqvOa7PrV8RftjJxgkrAvg@224963c307.5512",
+      "redundancy_msgids": [
+       "sYwN5oxo5BLobVkJdIObmQ@31bafa0bf0.af0b"
+      ],
+      "size": 456
+     },
+     {
+      "part_number": 2,
+      "primary_msgid": "oBhIprmVGCchbuv6vp0hbw@f3a099a294.2adc",
+      "redundancy_msgids": [
+       "MnX1ZEqtkchEWGOdFIrjwg@f282bcb5ec.9037"
+      ],
+      "size": 456
+     }
+    ],
+    "total_parts": 2
+   },
+   "created_at": "2026-10-25T00:00:00Z",
+   "folder_id": "5575139d3d639aba9a278cac42d6bc93",
+   "folder_version": 1,
+   "format": "share_v4_manifest",
+   "owner_key_fingerprint": "c8bf4eedf3cf2967d05b778e377d4ae6d8c682e85e827c2a3955a6999444fa3b",
+   "owner_public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAwrXQHKXHWGTxrS7nL+qpermqqHJivkn5hXx7J1tKtnw=\n-----END PUBLIC KEY-----\n",
+   "prev_version_message_id": "",
+   "share_id": "67aecbf2bf423abb2a589ded410d3d4b",
+   "sig": {
+    "access_digest": "a8d673a71df96d560a8b99e7e3cb1d6d6a2d73abc1f40d2e43e3dd3bf74a01e8",
+    "alg": "ed25519",
+    "core_index_root": "41752b34d0a870d9f7923315e6a76e29b20b7032e1b8796c027a1aaebaf788fd",
+    "signature": "8H9mhi/Zfe+saI2Yto3XsQtANkI4SPSkB6cdDPih095l/39WXC1zE8NG7P9RBpC4/1f9fLeWEjm7ZRABPhEEAw==",
+    "tbs_version": 1
+   },
+   "version": 4
+  },
+  "name": "v4"
+ },
+ {
+  "link": "usenet://jsWPiIfAdRSVSaQcz1eJVg@64a69eaf12.beb2+Hg6nweGxB5lXFSUzljEL7Q@8a6995f151.e9b7/8beba72f261b83512a8ec9255c0a90e4/1a4d17f2a1f87f69d0bac8365c48a9db26d02a29e095671a39c6ea92560bfb17#425371811894cc76d1fd9149f5bc0a2e60441fc3a014e1fca37443585d8c3c74",
+  "manifest": {
+   "access": {
+    "folder_key_hex": "425371811894cc76d1fd9149f5bc0a2e60441fc3a014e1fca37443585d8c3c74",
+    "mode": "public"
+   },
+   "core_index_format": "sharded",
+   "created_at": "2026-10-25T00:00:00Z",
+   "folder_digest": "",
+   "folder_id": "8beba72f261b83512a8ec9255c0a90e4",
+   "folder_version": 1,
+   "format": "core_index",
+   "num_shards": 2,
+   "owner_key_fingerprint": "1a4d17f2a1f87f69d0bac8365c48a9db26d02a29e095671a39c6ea92560bfb17",
+   "owner_public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAOjRJX3jq7nhKZP98C3hzbM547TS+1BkXNG2mwtfnA+4=\n-----END PUBLIC KEY-----\n",
+   "prev_version_message_id": "",
+   "shard_key": "file_id_mod_n",
+   "shards": [
+    {
+     "digest": "580ac97ccca3cc5781539db07f7f43f48862ab4a41e9c26dcf4004774b275c8a",
+     "parts": [
+      {
+       "part_number": 1,
+       "primary_msgid": "Otkm4TtfEBd02RUhvGcKaw@01f2ed0e64.fc7e",
+       "redundancy_msgids": [
+        "l8rvbjZeKG1aQ8bXYfKTuA@801c74e3ac.4e95"
+       ],
+       "size": 276
+      },
+      {
+       "part_number": 2,
+       "primary_msgid": "x7wkg2HGfPbXiaaeL25VHQ@8de93bb7a8.c774",
+       "redundancy_msgids": [
+        "iUayIfTkt5aWJe1k0nKQSA@1732d19c14.9d96"
+       ],
+       "size": 276
+      }
+     ],
+     "shard_index": 0
+    },
+    {
+     "digest": "cda635a23501c6bc8e2534b79ff6548e102d7c01bf09ebc1c1e0373357eeb425",
+     "parts": [
+      {
+       "part_number": 1,
+       "primary_msgid": "wv6GsgnYkiVFpfo4Nxqwgg@a130af683c.5828",
+       "redundancy_msgids": [
+        "7ZTX38PCO5Lulht5Ez1jdg@d826f9daab.8b94"
+       ],
+       "size": 220
+      },
+      {
+       "part_number": 2,
+       "primary_msgid": "saR4CpbtDcc0RcfSJgvqYg@d2802338d6.0ae6",
+       "redundancy_msgids": [
+        "HgIGYGIYQPekLiMv9CNjIA@e4728062fc.9db1"
+       ],
+       "size": 220
+      }
+     ],
+     "shard_index": 1
+    }
+   ],
+   "shards_root": "8c3f94573eebe2ca74a073df632b3b295ba87cc7b6f3cdb90a8ccc4128ec9488",
+   "share_id": "6f56f7269d674af7c2926ede0475d40b",
+   "sig": {
+    "access_digest": "29730e01f610f9f66e7a951106d70f17c2af3013074961933a2e7a55ca324ce0",
+    "alg": "ed25519",
+    "shards_root": "8c3f94573eebe2ca74a073df632b3b295ba87cc7b6f3cdb90a8ccc4128ec9488",
+    "signature": "d8DOvpUmEjfwKAVFQUSmkqk/VpCa08Es/gZZRvVF80jvcG4wCVIdv75tA7aLdmZVKOcSvbAdVCJKIfZ9KrACCw==",
+    "tbs_version": 1
+   },
+   "version": 5
+  },
+  "name": "v5"
+ }
+]

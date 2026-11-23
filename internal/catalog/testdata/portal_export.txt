@@ -1,0 +1,50 @@
+Example Copy Links - sample portal export
+Generated for the tests, 2026-01-01
+
+============================================================
+SOURCE: sampleshop  (6 builds, 8 links)
+============================================================
+
+Sample Handheld Build for Testing  [1.5TB]
+SKU: SMP15
+usn://AnVzZW5ldDovL3gxMDAwZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2U4L2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+Another Sample Collection - Complete Edition with a Rather Long Name That Runs On and On  [512GB]
+Info: https://example.invalid/sample/another
+usn://AnVzZW5ldDovL3gxMDAxZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2U5L2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+Two Sizes Sample Image  [32GB / 64GB]
+SKU: TWO3264
+32GB:
+usn://AnVzZW5ldDovL3gxMDAyZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2VhL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+64GB:
+usn://AnVzZW5ldDovL3gxMDAzZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2ViL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+Multi Drive Sample Set  [45TB]
+Info: https://example.invalid/sample/drives
+Drive A (Main) - 1 of 2:
+usn://AnVzZW5ldDovL3gxMDA0ZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2VjL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+Drive B - 2 of 2:
+usn://AnVzZW5ldDovL3gxMDA1ZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2VkL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+Sample Without A Size
+usn://AnVzZW5ldDovL3gxMDA2ZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2VlL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+Ünïcödé Sample 🎮 Edition  [2TB]
+SKU: UNI2
+usn://AnVzZW5ldDovL3gxMDA3ZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2VmL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+============================================================
+SOURCE: otherportal  (3 builds, 3 links)
+============================================================
+
+Sample Handheld Build for Testing - Mirror  [1.5TB]
+Info: https://example.invalid/other/mirror
+usn://AnVzZW5ldDovL3gxMDAwZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2U4L2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+A Holiday Release Announcement With A Colon At The End:
+usn://AnVzZW5ldDovL3gxMDA4ZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2YwL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
+
+Brackets That Are Not Sizes [CCI] [v2]  [1TB]
+SKU: BRK1
+usn://AnVzZW5ldDovL3gxMDA5ZmFrZWFydGljbGVAZXhhbXBsZS5pbnZhbGlkLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM2YxL2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUjZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZg
