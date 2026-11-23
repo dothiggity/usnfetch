@@ -165,42 +165,42 @@ type Task interface {
 
 // Result of one file.
 type Result struct {
-	File      string           `json:"file"`
-	Out       string           `json:"out"`
-	Size      int64            `json:"size"`
-	Segments  int64            `json:"segments"`
-	Done      int64            `json:"done"`
-	Missing   []int64          `json:"missing"`
-	Failed    map[int64]string `json:"failed"`
-	ElapsedS  float64          `json:"elapsed_s"`
-	AvgMiBps  float64          `json:"avg_MiBps"`
-	Complete  bool             `json:"complete"`
-	SHA256OK  *bool            `json:"sha256_ok,omitempty"`
-	SHA256    string           `json:"sha256,omitempty"`
+	File     string           `json:"file"`
+	Out      string           `json:"out"`
+	Size     int64            `json:"size"`
+	Segments int64            `json:"segments"`
+	Done     int64            `json:"done"`
+	Missing  []int64          `json:"missing"`
+	Failed   map[int64]string `json:"failed"`
+	ElapsedS float64          `json:"elapsed_s"`
+	AvgMiBps float64          `json:"avg_MiBps"`
+	Complete bool             `json:"complete"`
+	SHA256OK *bool            `json:"sha256_ok,omitempty"`
+	SHA256   string           `json:"sha256,omitempty"`
 }
 
 // Engine downloads one segmented file: every segment fetched by Message-ID over the
 // pool's connections, decrypted, and written once at its final offset; a bitmap
 // checkpoint makes any interruption resumable to the segment.
 type Engine struct {
-	Plan             *share.Plan
-	Out              string
-	Pool             *Pool
-	Log              func(string)
-	MissingRetries   int
-	RetryWait        time.Duration
-	Verify           bool
-	ProgressEvery    time.Duration
-	bitmap           *Bitmap
-	aead             cipher.AEAD
-	stop             chan struct{}
-	stopOnce         sync.Once
-	stats            atomic.Pointer[Stats]
-	phase            atomic.Value
-	mu               sync.Mutex
-	missing          []int64
-	failed           map[int64]string
-	queue            *workQueue
+	Plan           *share.Plan
+	Out            string
+	Pool           *Pool
+	Log            func(string)
+	MissingRetries int
+	RetryWait      time.Duration
+	Verify         bool
+	ProgressEvery  time.Duration
+	bitmap         *Bitmap
+	aead           cipher.AEAD
+	stop           chan struct{}
+	stopOnce       sync.Once
+	stats          atomic.Pointer[Stats]
+	phase          atomic.Value
+	mu             sync.Mutex
+	missing        []int64
+	failed         map[int64]string
+	queue          *workQueue
 }
 
 func NewEngine(plan *share.Plan, out string, pool *Pool, log func(string)) (*Engine, error) {
@@ -224,8 +224,15 @@ func NewEngine(plan *share.Plan, out string, pool *Pool, log func(string)) (*Eng
 	return e, nil
 }
 
-func (e *Engine) Stop()          { e.stopOnce.Do(func() { close(e.stop) }) }
-func (e *Engine) stopped() bool  { select { case <-e.stop: return true; default: return false } }
+func (e *Engine) Stop() { e.stopOnce.Do(func() { close(e.stop) }) }
+func (e *Engine) stopped() bool {
+	select {
+	case <-e.stop:
+		return true
+	default:
+		return false
+	}
+}
 func (e *Engine) logf(f string, a ...any) {
 	if e.Log != nil {
 		e.Log(fmt.Sprintf(f, a...))

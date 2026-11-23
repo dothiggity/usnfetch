@@ -17,14 +17,14 @@ type PoolEntry struct {
 }
 
 type rawPool struct {
-	M         string      `json:"m"`
-	MessageID string      `json:"message_id"`
-	N         string      `json:"n"`
-	NonceL    string      `json:"nonce"`
-	T         string      `json:"t"`
-	TagL      string      `json:"tag"`
-	S         json.Number `json:"s"`
-	SizeL     json.Number `json:"size"`
+	M         string       `json:"m"`
+	MessageID string       `json:"message_id"`
+	N         string       `json:"n"`
+	NonceL    string       `json:"nonce"`
+	T         string       `json:"t"`
+	TagL      string       `json:"tag"`
+	S         json.Number  `json:"s"`
+	SizeL     json.Number  `json:"size"`
 	Ref       *json.Number `json:"ref"`
 }
 
@@ -57,18 +57,18 @@ type FileRec struct {
 }
 
 type rawFile struct {
-	FileID   any          `json:"file_id"`
-	I        any          `json:"i"`
-	Path     string       `json:"path"`
-	P        string       `json:"p"`
-	Name     string       `json:"name"`
-	N        string       `json:"n"`
-	Size     json.Number  `json:"size"`
-	S        json.Number  `json:"s"`
-	Hash     *string      `json:"hash"`
-	H        *string      `json:"h"`
-	Segments []int64      `json:"segments"`
-	Sg       []int64      `json:"sg"`
+	FileID   any         `json:"file_id"`
+	I        any         `json:"i"`
+	Path     string      `json:"path"`
+	P        string      `json:"p"`
+	Name     string      `json:"name"`
+	N        string      `json:"n"`
+	Size     json.Number `json:"size"`
+	S        json.Number `json:"s"`
+	Hash     *string     `json:"hash"`
+	H        *string     `json:"h"`
+	Segments []int64     `json:"segments"`
+	Sg       []int64     `json:"sg"`
 	SegRange *struct {
 		Start  json.Number `json:"start"`
 		Stride json.Number `json:"stride"`

@@ -605,7 +605,7 @@ func loadVia(link *Link, a *nntp.Account, o LoadOpts, logf func(string, ...any))
 		"format": m.Str("format"), "version": m["version"], "access": m.AccessMode(), "created_at": m.Str("created_at"),
 		"share_id": m.Str("share_id"), "folder_id": link.FolderID, "newsgroup": link.Newsgroup,
 		"owner_fingerprint": strings.ToLower(firstNonEmpty(m.Str("owner_key_fingerprint"), link.OwnerFP)),
-		"signature": sig, "segment_size": ix.SegmentSize, "pool_count": ix.PoolCount,
+		"signature":         sig, "segment_size": ix.SegmentSize, "pool_count": ix.PoolCount,
 	}
 	_ = os.Chtimes(path, time.Now(), time.Now()) // "recently used": the cache sweep keeps it a few days
 	logf("core index: %d pool entries, %d files, segment_size=%d", ix.PoolCount, ix.FileCount, ix.SegmentSize)
