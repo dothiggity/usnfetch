@@ -867,8 +867,21 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 	s.smu.Lock()
 	open := len(s.sessions)
 	s.smu.Unlock()
+	// the transfer in progress, for the status bar: running jobs first, then the waiting ones
+	transfer := []map[string]any{}
+	for _, pass := range []bool{true, false} {
+		for _, j := range q {
+			isRunning := j.State == "planning" || j.State == "downloading" || j.State == "extracting" || j.State == "stopping"
+			if isRunning != pass || len(transfer) >= 4 {
+				continue
+			}
+			transfer = append(transfer, map[string]any{"id": j.JobID, "name": j.Name, "state": j.State, "phase": j.Phase, "bytes": j.Bytes,
+				"size": j.Size, "rate": j.Rate, "eta": j.ETA, "file_pos": j.FilePos, "current": j.Current, "missing": j.Missing, "detail": j.Detail})
+		}
+	}
 	return map[string]any{"version": s.Version, "accounts": accounts, "needs_setup": accounts == "", "disk": disk, "active": len(q), "throttle": s.M.Throttle(), "setup_done": s.M.Settings.SetupDone,
-		"running": running, "speed": speed, "open_shares": open, "runtime": runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
+		"transfer": transfer,
+		"running":  running, "speed": speed, "open_shares": open, "runtime": runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
 		"python": runtime.Version(), "data_dir": s.M.DataDir}, nil
 }
 

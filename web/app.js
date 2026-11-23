@@ -163,18 +163,53 @@ async function pollStatus() {
     const look = th.paused ? "paused" : s.running > 0 ? "busy" : "idle";
     const src = `/static/icon-${look}.png`;
     if ($("#logo") && !$("#logo").src.endsWith(src)) { $("#logo").src = src; $("#favicon").href = src; }
-    $("#f-speed").textContent = th.paused ? "paused" : s.speed > 0 ? fmtRate(s.speed) : "idle";
-    $("#f-speed").className = th.paused ? "warn" : "";
-    $("#f-limit").textContent = !th.paused && th.limit ? "· limit " + fmtRate(th.limit) : "";
-    const pb = $("#f-pause");
-    pb.title = th.paused ? `${throttleText(th)}: resume downloads` : "Pause downloads";
-    put(pb, icon(th.paused ? "play" : "pause"));
-    pb.onclick = () => (th.paused ? resumeAll() : pausePrompt()).catch(fail);
-    $("#f-free").textContent = s.disk.free != null ? fmtBytes(s.disk.free) : "—";
-    $("#f-meter").style.width = s.disk.total ? (100 - pct(s.disk.free, s.disk.total)).toFixed(1) + "%" : "0";
+    renderStatusBar(s, look);
     $("#ver").textContent = "v" + s.version;
     const b = $("#nav-badge"); if (b) { b.textContent = s.active; b.classList.toggle("hidden", !s.active); }
   } catch { /* login page or offline */ }
+}
+
+// the status bar at the bottom of every page: the transfer in progress, speed, queue, free space, pause
+const RUNNING = new Set(["planning", "downloading", "extracting", "stopping"]);
+function renderStatusBar(s, look) {
+  const bar = $("#statusbar"); if (!bar) return;
+  const th = s.throttle || {};
+  const jobs = s.transfer || [];
+  const running = jobs.filter((j) => RUNNING.has(j.state));
+  const cur = running[0];
+  const waiting = Math.max(0, (s.active || 0) - running.length);
+  const p = cur && cur.size ? pct(cur.bytes, cur.size) : 0;
+  let main;
+  if (th.paused) {
+    main = [h("b", {}, throttleText(th)), h("span", { class: "faint" }, s.active ? `${s.active} waiting in the queue` : "nothing waiting")];
+  } else if (cur) {
+    const verb = { planning: "Preparing", downloading: "Downloading", extracting: "Extracting", stopping: "Stopping" }[cur.state] || cur.state;
+    const fp = cur.file_pos && cur.file_pos[1] > 1 ? `file ${cur.file_pos[0].toLocaleString()} of ${cur.file_pos[1].toLocaleString()}` : "";
+    main = [h("span", { class: "sb-verb" }, verb), h("b", { class: "sb-name", title: cur.name }, cur.name),
+      cur.state === "planning" ? h("span", { class: "faint" }, "loading the share index…") : null,
+      fp ? h("span", { class: "faint nowrap sb-fp" }, fp) : null,
+      cur.current ? h("span", { class: "faint sb-file", title: cur.current }, cur.current) : null,
+      running.length > 1 ? h("span", { class: "chip plain" }, `+${running.length - 1} more running`) : null];
+  } else {
+    main = [h("b", {}, waiting ? `${waiting} queued` : "Idle"), h("span", { class: "faint" }, waiting ? "waiting to start" : "nothing downloading")];
+  }
+  const prog = cur && cur.state === "downloading" ? h("div", { class: "sb-prog" },
+    h("div", { class: "bar" }, h("i", { style: { width: p + "%" } })),
+    h("div", { class: "sb-pline" }, h("b", {}, p.toFixed(1) + "%"), h("span", { class: "sb-of" }, ` · ${fmtBytes(cur.bytes)} of ${fmtBytes(cur.size)}`),
+      cur.eta ? [" · ETA ", h("b", {}, fmtEta(cur.eta))] : null)) : null;
+  put(bar,
+    h("img", { class: "sb-icon", src: `/static/icon-${look}.png`, alt: "" }),
+    h("div", { class: "sb-main" }, main),
+    prog,
+    h("div", { class: "sb-stats" },
+      th.paused ? null : h("span", { class: "sb-speed", title: th.limit ? `Limited to ${fmtRate(th.limit)}` : "Download speed" },
+        icon("download"), h("b", {}, s.speed > 0 ? fmtRate(s.speed) : "0 B/s"), th.limit ? h("span", { class: "faint" }, " / " + fmtRate(th.limit)) : null),
+      cur && waiting ? h("span", { class: "sb-queue" }, h("b", {}, waiting), " queued") : null,
+      s.disk && s.disk.free != null ? h("span", { class: "sb-free", title: s.disk.path }, h("b", {}, fmtBytes(s.disk.free)), " free") : null),
+    h("button", { class: "btn sm " + (th.paused ? "primary" : "ghost"), title: th.paused ? "Resume downloads" : "Pause downloads",
+      onclick: (ev) => { ev.stopPropagation(); (th.paused ? resumeAll() : pausePrompt()).catch(fail); } }, icon(th.paused ? "play" : "pause"), h("span", { class: "sb-btxt" }, th.paused ? "Resume" : "Pause")));
+  bar.className = "statusbar " + look;
+  document.title = cur && cur.state === "downloading" ? `${p.toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch` : th.paused ? "Paused — usnfetch" : "usnfetch";
 }
 
 const ROUTES = { catalog: pageCatalog, share: pageShare, activity: pageActivity, settings: pageSettings, system: pageSystem, login: pageLogin, setup: pageSetup };
@@ -1297,7 +1332,10 @@ async function boot() {
     try { const st = await api("/status"); if (st.setup_done === false && !location.hash.startsWith("#/setup")) start = "#/setup"; } catch { /* offline */ }
   }
   window.addEventListener("hashchange", route);
-  setInterval(() => { if (!document.hidden) pollStatus(); }, 3000);
+  $("#statusbar").addEventListener("click", () => { location.hash = "#/activity"; });
+  (function poll() {   // every 1.5 s while something runs, every 3 s otherwise
+    setTimeout(async () => { if (!document.hidden) await pollStatus(); poll(); }, lastStatus && lastStatus.running > 0 ? 1500 : 3000);
+  })();
   pollStatus(); renderBasket();
   window.addEventListener("storage", (ev) => { if (ev.key === "usnf.basket") { basket.all = store.get("basket", {}); renderBasket(); if (page.onBasket) page.onBasket(); } });
   if (start) location.hash = start;   // its hashchange routes, once

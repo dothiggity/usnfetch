@@ -316,6 +316,8 @@ def main():
         time.sleep(1.5)                                          # paused: nothing starts
         q = c.call("GET", "/api/jobs")[1]
         assert [j["job_id"] for j in q["queue"]] == ids and all(j["state"] == "queued" for j in q["queue"]) and q["throttle"]["paused"], q["queue"]
+        tr = c.call("GET", "/api/status")[1]["transfer"]                  # what the status bar shows
+        assert [t["id"] for t in tr] == ids and all(t["state"] == "queued" and t["size"] >= 0 for t in tr), tr
         assert c.call("POST", "/api/jobs/reorder", {"ids": [ids[2], ids[0], ids[1]]})[0] == 200
         assert [j["job_id"] for j in c.call("GET", "/api/jobs")[1]["queue"]] == [ids[2], ids[0], ids[1]]
         code, sv, _ = c.call("PUT", "/api/settings", {"speed_limit_mbps": 5, "schedule": [{"enabled": True, "days": [], "from": "00:00", "to": "00:00", "action": "limit", "limit_mbps": 2}]})

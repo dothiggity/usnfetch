@@ -20,15 +20,11 @@ try { const g = (k, d) => { const v = localStorage.getItem("usnf.ui." + k); retu
     </div>
     <nav class="nav" id="nav"></nav>
     <div class="basket hidden" id="basket"></div>
-    <div class="side-foot">
-      <div class="row"><span>Speed <small id="f-limit"></small></span><span class="sp"><b id="f-speed">—</b><button class="btn ghost icon xs" id="f-pause" title="Pause downloads"></button></span></div>
-      <div class="row"><span>Free</span><b id="f-free">—</b></div>
-      <div class="meter"><i id="f-meter" style="width:0"></i></div>
-    </div>
   </aside>
   <main>
     <header class="top"><h1 id="title"></h1><div id="toolbar"></div></header>
     <section id="view"></section>
+    <footer class="statusbar" id="statusbar" title="Open Activity"></footer>
   </main>
 </div>
 <div id="modal-root"></div>
