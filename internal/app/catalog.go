@@ -29,6 +29,7 @@ type Catalog struct {
 	mu      sync.Mutex
 	store   *Store
 	Entries []catalog.Entry
+	undo    []catalog.Entry // the entries before the last import that changed them; nil = nothing to undo
 }
 
 func LoadCatalog(s *Store) (*Catalog, error) {
@@ -39,15 +40,61 @@ func LoadCatalog(s *Store) (*Catalog, error) {
 	return &Catalog{store: s, Entries: e}, nil
 }
 
-// Merge adds new links and refreshes the listing details of known ones. Returns (added, updated).
-func (c *Catalog) Merge(newEntries []catalog.Entry) (int, int, error) {
+// MergeOptions: how an import treats links the catalog already has.
+type MergeOptions struct {
+	Overwrite bool // replace details that differ (title, size, …); off = only fill in blank ones
+	DryRun    bool // report what would happen, change nothing
+}
+
+// FieldChange is one detail of a known entry that an import replaces (or would).
+type FieldChange struct {
+	Field string `json:"field"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+}
+
+// EntryChange: the details of one known entry that the import has differently.
+type EntryChange struct {
+	ID     string        `json:"id"`
+	Title  string        `json:"title"`
+	Fields []FieldChange `json:"fields"`
+}
+
+// MergeResult says what an import did (or, dry run, would do).
+type MergeResult struct {
+	Added   int           `json:"added"`
+	Filled  int           `json:"filled"`  // known entries whose blank details were filled in
+	Changed int           `json:"changed"` // known entries whose differing details were replaced (Overwrite)
+	Kept    int           `json:"kept"`    // known entries whose differing details were left as they were
+	Changes []EntryChange `json:"changes"` // every known entry the import has other details for
+}
+
+func copyEntries(es []catalog.Entry) []catalog.Entry {
+	out := make([]catalog.Entry, len(es))
+	for i, e := range es {
+		e.Also = append([]string{}, e.Also...)
+		out[i] = e
+	}
+	return out
+}
+
+// Merge adds new links. For links already there, a blank detail is never copied over a
+// filled one (a pasted bare link must not wipe a title, a SKU or a source), blank details
+// get filled in, and details that differ are replaced only with Overwrite.
+func (c *Catalog) Merge(newEntries []catalog.Entry, o MergeOptions) (MergeResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	work := c.Entries
+	if o.DryRun {
+		work = copyEntries(c.Entries)
+	}
+	before := copyEntries(c.Entries)
 	idx := map[string]int{}
-	for i, e := range c.Entries {
+	for i, e := range work {
 		idx[e.Link] = i
 	}
-	added, updated := 0, 0
+	res := MergeResult{Changes: []EntryChange{}}
+	touched := false
 	t := now()
 	for _, n := range newEntries {
 		i, ok := idx[n.Link]
@@ -56,36 +103,104 @@ func (c *Catalog) Merge(newEntries []catalog.Entry) (int, int, error) {
 			if n.Also == nil {
 				n.Also = []string{}
 			}
-			c.Entries = append(c.Entries, n)
-			idx[n.Link] = len(c.Entries) - 1
-			added++
+			if n.Title == "" {
+				n.Title = catalog.FallbackTitle(n.Link)
+			}
+			work = append(work, n)
+			idx[n.Link] = len(work) - 1
+			res.Added++
+			touched = true
 			continue
 		}
-		o := c.Entries[i]
-		before := o
-		before.Also = append([]string{}, o.Also...)
-		o.Title, o.Variant, o.Listed, o.Size, o.Source, o.SKU, o.Info = n.Title, n.Variant, n.Listed, n.Size, n.Source, n.SKU, n.Info
+		e := work[i]
+		newTitle := n.Title
+		if newTitle == catalog.FallbackTitle(n.Link) { // no title in the text: nothing to say about it
+			newTitle = ""
+		}
+		oldTitle := e.Title
+		if oldTitle == catalog.FallbackTitle(e.Link) {
+			oldTitle = ""
+		}
+		type field struct {
+			name, from, to string
+			set            func()
+		}
+		fields := []field{
+			{"title", oldTitle, newTitle, func() { e.Title = n.Title }},
+			{"label", e.Variant, n.Variant, func() { e.Variant = n.Variant }},
+			{"listed size", e.Listed, n.Listed, func() { e.Listed, e.Size = n.Listed, n.Size }},
+			{"source", e.Source, n.Source, func() { e.Source = n.Source }},
+			{"SKU", e.SKU, n.SKU, func() { e.SKU = n.SKU }},
+			{"info link", e.Info, n.Info, func() { e.Info = n.Info }},
+		}
+		filled := false
+		var diff []FieldChange
+		for _, f := range fields {
+			switch {
+			case f.to == "" || f.to == f.from:
+			case f.from == "":
+				f.set()
+				filled = true
+			default:
+				diff = append(diff, FieldChange{f.name, f.from, f.to})
+				if o.Overwrite {
+					f.set()
+				}
+			}
+		}
 		seen := map[string]bool{}
-		var also []string
-		for _, a := range append(append([]string{}, o.Also...), n.Also...) {
+		also := []string{}
+		for _, a := range append(append([]string{}, e.Also...), n.Also...) {
 			if !seen[a] {
 				seen[a] = true
 				also = append(also, a)
 			}
 		}
-		if also == nil {
-			also = []string{}
+		if !reflect.DeepEqual(also, e.Also) {
+			e.Also = also
+			touched = true
 		}
-		o.Also = also
-		if !reflect.DeepEqual(before, o) {
-			updated++
+		if filled {
+			res.Filled++
+			touched = true
 		}
-		c.Entries[i] = o
+		if len(diff) > 0 {
+			res.Changes = append(res.Changes, EntryChange{ID: LinkID(e.Link), Title: e.Label(), Fields: diff})
+			if o.Overwrite {
+				res.Changed++
+				touched = true
+			} else {
+				res.Kept++
+			}
+		}
+		work[i] = e
 	}
-	if added > 0 || updated > 0 {
-		return added, updated, c.store.SaveCatalog(c.Entries)
+	if o.DryRun || !touched {
+		return res, nil
 	}
-	return added, updated, nil
+	c.Entries, c.undo = work, before
+	return res, c.store.SaveCatalog(c.Entries)
+}
+
+// Add puts one link in the catalog (from a share opened by its link); a link that is
+// there already is left alone. Reports whether it was added.
+func (c *Catalog) Add(e catalog.Entry) (bool, error) {
+	if _, ok := c.ByLink(e.Link); ok {
+		return false, nil
+	}
+	r, err := c.Merge([]catalog.Entry{e}, MergeOptions{})
+	return r.Added > 0, err
+}
+
+// Undo puts the catalog back as it was before the last import that changed it.
+func (c *Catalog) Undo() (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.undo == nil {
+		return false, nil
+	}
+	c.Entries, c.undo = c.undo, nil
+	return true, c.store.SaveCatalog(c.Entries)
 }
 
 func (c *Catalog) Remove(links map[string]bool) error {
@@ -100,7 +215,7 @@ func (c *Catalog) Remove(links map[string]bool) error {
 	if keep == nil {
 		keep = []catalog.Entry{}
 	}
-	c.Entries = keep
+	c.Entries, c.undo = keep, nil
 	return c.store.SaveCatalog(c.Entries)
 }
 

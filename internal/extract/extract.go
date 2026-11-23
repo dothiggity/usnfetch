@@ -458,6 +458,9 @@ func Find7z() string { return find7z("") }
 // FindUnrar returns the path of UnRAR (unrar on PATH, or Program Files\WinRAR\UnRAR.exe), or "".
 func FindUnrar() string { return findUnrar("") }
 
+// FindTools: the 7-Zip and UnRAR an extraction with these settings would use ("" = none found).
+func FindTools(sevenZip, unrar string) (string, string) { return find7z(sevenZip), findUnrar(unrar) }
+
 // run starts tool with stdin on the null device and no console window, waits, and
 // returns its exit code plus the tail Python's error messages show:
 // (stderr or stdout).strip()[-400:].

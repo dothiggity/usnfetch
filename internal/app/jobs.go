@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	activeStates   = map[string]bool{"queued": true, "planning": true, "downloading": true, "extracting": true, "stopping": true}
+	activeStates   = map[string]bool{"queued": true, "paused": true, "planning": true, "downloading": true, "extracting": true, "stopping": true}
 	runningStates  = map[string]bool{"planning": true, "downloading": true, "extracting": true, "stopping": true}
 	finishedStates = map[string]bool{"completed": true, "failed": true, "stopped": true}
 )
@@ -68,6 +68,9 @@ type Job struct {
 	// folder common to the selection is dropped, so resumed jobs keep their layout.
 	Layout   string   `json:"layout,omitempty"`
 	Warnings []string `json:"warnings,omitempty"` // problems that did not fail the job (extraction)
+	// Picked says what of the share the job takes ("" = all of it; "Disc 2", "5 items"):
+	// jobs of one share share a folder name, so this is what tells them apart.
+	Picked string `json:"picked,omitempty"`
 
 	// runtime only
 	mu          sync.Mutex
@@ -82,6 +85,7 @@ type Job struct {
 	exact       map[string]bool
 	prefixes    []string
 	pauseStop   bool // stopped by a pause: goes back to the queue
+	holdStop    bool // paused on its own: waits in the queue, as "paused", until resumed
 }
 
 // LayoutShare: see Job.Layout.
@@ -218,6 +222,7 @@ type JobView struct {
 	Result      map[string]any `json:"result,omitempty"`
 	ExtractMode string         `json:"extract_mode,omitempty"`
 	Warnings    []string       `json:"warnings,omitempty"`
+	Picked      string         `json:"picked,omitempty"`
 }
 
 func (j *Job) View(full bool) JobView {
@@ -226,7 +231,7 @@ func (j *Job) View(full bool) JobView {
 	v := JobView{JobID: j.ID, Link: j.Link, Name: j.Name, NameAuto: j.NameAuto, Category: j.Category, State: j.State, Detail: j.Detail,
 		Added: j.Added, Started: j.Started, Finished: j.Finished, OutDir: j.OutDir, Size: j.Size, DoneCount: j.doneCount,
 		PlanOnly: j.PlanOnly, IndexFile: j.IndexFile, Current: j.current, FilePos: j.filePos, Phase: j.State, Bytes: j.bytesPrev,
-		ExtractMode: j.ExtractMode, Warnings: j.Warnings}
+		ExtractMode: j.ExtractMode, Warnings: j.Warnings, Picked: j.Picked}
 	if j.FileCount > 0 || j.Files != nil {
 		n := max(j.FileCount, len(j.Files))
 		v.FileCount = &n
@@ -505,6 +510,8 @@ type AddOptions struct {
 	FileSel                   []string // nil = the whole share
 	ExtractMode               string   // "" = the settings' default
 	Existing                  string   // "" (skip same-size files), ExistingVerify, ExistingRedownload
+	Picked                    string   // what of the share this is, for telling jobs apart (see Job.Picked)
+	Size                      int64    // the planned size, shown while it waits (0 = not known yet)
 }
 
 func sameSel(a, b []string) bool {
@@ -550,6 +557,7 @@ func (m *Manager) AddJob(link string, o AddOptions) (*Job, error) {
 		o.Existing = ""
 	}
 	j.Password, j.ArchivePassword, j.PlanOnly, j.ExtractMode, j.Existing = o.Password, o.ArchivePassword, o.PlanOnly, o.ExtractMode, o.Existing
+	j.Picked, j.Size = o.Picked, max(0, o.Size)
 	if o.FileSel != nil {
 		j.FileSel = append([]string{}, o.FileSel...)
 	}
@@ -557,34 +565,39 @@ func (m *Manager) AddJob(link string, o AddOptions) (*Job, error) {
 	m.order = append(m.order, j.ID)
 	m.mu.Unlock()
 	m.SaveState()
-	m.Log(fmt.Sprintf("queued %s %s", j.ID, j.Name))
+	m.Log(fmt.Sprintf("queued %s (%s)", j.Label(), j.ID))
 	return j, nil
 }
 
-var linkTok = regexp.MustCompile(`[\s,]+`)
+// jobLog is the log for one job's downloads: lines say which job they are about, and
+// the progress lines (every couple of seconds from the engine) are kept to one in 30 s.
+func (m *Manager) jobLog(j *Job) func(string) {
+	var last time.Time
+	var mu sync.Mutex
+	return func(s string) {
+		if progressLine.MatchString(s) {
+			mu.Lock()
+			skip := time.Since(last) < 30*time.Second
+			if !skip {
+				last = time.Now()
+			}
+			mu.Unlock()
+			if skip {
+				return
+			}
+		}
+		m.Log(j.Label() + ": " + strings.TrimSpace(s))
+	}
+}
 
-func (m *Manager) AddMany(text, category, name, password, archivePassword string, planOnly bool) ([]*Job, []string) {
-	var links []string
-	for _, t := range linkTok.Split(text, -1) {
-		if strings.HasPrefix(t, "usn://") || strings.HasPrefix(t, "usenet://") {
-			links = append(links, t)
-		}
+var progressLine = regexp.MustCompile(`^\s*\d+\.\d+%`)
+
+// Label is the job as people see it: its name, and what of the share it takes.
+func (j *Job) Label() string {
+	if j.Picked != "" {
+		return j.Name + " — " + j.Picked
 	}
-	var out []*Job
-	var bad []string
-	for _, l := range links {
-		n := ""
-		if len(links) == 1 {
-			n = name
-		}
-		j, err := m.Add(l, n, category, password, archivePassword, planOnly, nil)
-		if err != nil {
-			bad = append(bad, fmt.Sprintf("%s…: %v", l[:min(40, len(l))], err))
-			continue
-		}
-		out = append(out, j)
-	}
-	return out, bad
+	return j.Name
 }
 
 func (m *Manager) Get(id string) *Job {
@@ -609,8 +622,34 @@ func (m *Manager) Stop(id string) bool {
 		}
 		j.State = "stopping"
 		return true
-	case j.State == "queued":
+	case j.State == "queued" || j.State == "paused":
 		j.State, j.Detail = "stopped", "stopped before start"
+		return true
+	}
+	return false
+}
+
+// PauseJob holds one job in the queue: a running one stops (keeping what it has) and
+// waits as "paused", like a queued one, until it is resumed.
+func (m *Manager) PauseJob(id string) bool {
+	j := m.Get(id)
+	if j == nil {
+		return false
+	}
+	j.mu.Lock()
+	defer func() { m.SaveState() }()
+	defer j.mu.Unlock()
+	switch {
+	case runningStates[j.State] && j.State != "stopping":
+		j.holdStop = true
+		j.cancel.Store(true)
+		if j.task != nil {
+			j.task.Stop()
+		}
+		j.State = "stopping"
+		return true
+	case j.State == "queued":
+		j.State, j.Detail = "paused", "paused"
 		return true
 	}
 	return false
@@ -618,6 +657,14 @@ func (m *Manager) Stop(id string) bool {
 
 func (m *Manager) Resume(id string, redownload bool) bool {
 	j := m.Get(id)
+	if j != nil && j.State == "paused" {
+		j.mu.Lock()
+		j.State, j.Detail = "queued", ""
+		j.cancel.Store(false)
+		j.mu.Unlock()
+		m.SaveState()
+		return true
+	}
 	if j == nil || !finishedStates[j.State] {
 		return false
 	}
@@ -817,6 +864,11 @@ func (m *Manager) finish(j *Job, state, detail string) {
 	if j.cancel.Load() && state != "completed" {
 		if m.shuttingDown.Load() {
 			state, detail = "queued", "resumes on next start"
+			if j.holdStop {
+				state, detail = "paused", "paused"
+			}
+		} else if j.holdStop && !j.deleted {
+			state, detail = "paused", "paused: carries on from where it was when resumed"
 		} else if j.pauseStop && !j.deleted {
 			state, detail = "queued", "paused"
 		} else if !j.deleted {
@@ -827,17 +879,18 @@ func (m *Manager) finish(j *Job, state, detail string) {
 		}
 	}
 	t := now()
-	j.pauseStop = false
+	j.pauseStop, j.holdStop = false, false
 	j.State, j.Detail, j.Finished, j.task, j.current = state, detail, &t, nil, ""
 	deleted := j.deleted
 	j.mu.Unlock()
 	if !deleted {
 		m.SaveState()
 	}
-	msg := fmt.Sprintf("%s %s: %s", j.ID, j.Name, state)
+	msg := fmt.Sprintf("%s: %s", j.Label(), state)
 	if detail != "" {
 		msg += " -- " + detail
 	}
+	msg += " (" + j.ID + ")"
 	m.Log(msg)
 }
 
@@ -1048,7 +1101,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 			return "stopped", "stopped while checking files already on disk"
 		}
 		if n > 0 {
-			m.Log(fmt.Sprintf("%s: %d file(s), %.2f GB already on disk, not downloaded again", j.ID, n, float64(bytes)/1e9))
+			m.Log(fmt.Sprintf("%s: %d file(s), %.2f GB already on disk, not downloaded again", j.Label(), n, float64(bytes)/1e9))
 		}
 	}
 	// outputs are sparse, so a full disk would otherwise only show up mid-download
@@ -1086,6 +1139,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	m.SaveState()
 	pool := engine.NewPool(accts)
 	defer pool.Close()
+	jlog := m.jobLog(j)
 	type bad struct{ name, why string }
 	var bads []bad
 	results := map[string]map[string]any{}
@@ -1120,7 +1174,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 			bads = append(bads, bad{rel, err.Error()})
 			continue
 		}
-		eng, err := engine.NewEngine(plan, out, pool, m.Log)
+		eng, err := engine.NewEngine(plan, out, pool, jlog)
 		if err != nil {
 			bads = append(bads, bad{rel, err.Error()})
 			continue
@@ -1186,7 +1240,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 			j.filePos = [2]int{len(segmented) + 1, len(chosen)}
 			j.current = fmt.Sprintf("%d small file(s)", len(wanted))
 			j.mu.Unlock()
-			pf, err := engine.NewPackFetcher(ix, wanted, pool, m.Log)
+			pf, err := engine.NewPackFetcher(ix, wanted, pool, jlog)
 			if err != nil {
 				return "failed", err.Error()
 			}

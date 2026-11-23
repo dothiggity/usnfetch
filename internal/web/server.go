@@ -65,6 +65,7 @@ type session struct {
 	Title    string
 	State    string // loading | ready | error | password
 	Error    string
+	Code     string // with State "error": "no_provider" when there is no provider to load it from
 	Log      []string
 	Index    *share.Index
 	Check    any
@@ -269,7 +270,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) openShare(link, title, password string) (*session, error) {
 	link = strings.TrimSpace(link)
 	if _, err := share.ParseLink(link); err != nil {
-		return nil, fail(400, "not a share link: "+err.Error(), "bad_link")
+		return nil, fail(400, err.Error(), "bad_link")
 	}
 	id := app.LinkID(link)
 	s.smu.Lock()
@@ -305,6 +306,9 @@ func (s *Server) loadShare(ss *session, password string) {
 	}
 	accts, err := s.M.Accounts()
 	if err != nil {
+		ss.mu.Lock()
+		ss.Code = "no_provider"
+		ss.mu.Unlock()
 		fail("error", err.Error())
 		return
 	}
@@ -426,7 +430,7 @@ func (s *Server) shareJSON(ss *session) map[string]any {
 	if len(logs) > 40 {
 		logs = logs[len(logs)-40:]
 	}
-	out := map[string]any{"id": ss.ID, "link": ss.Link, "title": ss.Title, "state": ss.State, "error": ss.Error,
+	out := map[string]any{"id": ss.ID, "link": ss.Link, "title": ss.Title, "state": ss.State, "error": ss.Error, "error_code": ss.Code,
 		"log": append([]string{}, logs...), "checking": ss.Checking, "check": ss.Check, "info": nil, "catalog": nil, "index": nil}
 	if ss.State == "ready" {
 		out["info"] = s.M.Store.ShareInfo(ss.Link)
@@ -518,6 +522,8 @@ func (s *Server) routes() {
 
 	// catalog
 	s.api("GET /api/catalog", s.catalogList)
+	// import: preview first (what is new, what would change), then apply; a blank detail
+	// never replaces a filled one, and differing details are replaced only when asked
 	s.api("POST /api/catalog/import", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		b := body(r)
 		name := str(b["name"])
@@ -525,16 +531,28 @@ func (s *Server) routes() {
 			name = "import"
 		}
 		src := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
-		entries := catalog.ParseText(catalog.DecodeListFile([]byte(str(b["text"]))), src)
+		entries := catalog.ParseText(catalog.DecodeListFile([]byte(str(b["text"]))), "")
 		if len(entries) == 0 {
-			return nil, fail(400, "no usn:// or usenet:// links found in that text", "no_links")
+			return nil, fail(400, "no usn:// links found in that text", "no_links")
 		}
-		added, updated, err := s.Cat.Merge(entries)
+		for i := range entries { // the import's name is the source of links no SOURCE: line names
+			if entries[i].Source == "" {
+				if _, known := s.Cat.ByLink(entries[i].Link); !known {
+					entries[i].Source = src
+				}
+			}
+		}
+		preview := b["preview"] == true
+		res, err := s.Cat.Merge(entries, app.MergeOptions{Overwrite: b["overwrite"] == true, DryRun: preview})
 		if err != nil {
 			return nil, err
 		}
-		s.M.Log(fmt.Sprintf("catalog import %s: %d link(s), %d new, %d updated", name, len(entries), added, updated))
-		return map[string]any{"found": len(entries), "added": added, "updated": updated}, nil
+		if !preview {
+			s.M.Log(fmt.Sprintf("catalog import %s: %d link(s), %d new, %d filled in, %d changed, %d left as they were", name, len(entries), res.Added, res.Filled, res.Changed, res.Kept))
+		}
+		return map[string]any{"found": len(entries), "added": res.Added, "updated": res.Filled + res.Changed, "filled": res.Filled,
+			"changed": res.Changed, "kept": res.Kept, "changes": res.Changes, "preview": preview,
+			"undo": !preview && res.Added+res.Filled+res.Changed > 0}, nil
 	})
 	s.api("POST /api/catalog/remove", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		ids := map[string]bool{}
@@ -549,35 +567,7 @@ func (s *Server) routes() {
 		}
 		return map[string]any{"removed": len(links)}, s.Cat.Remove(links)
 	})
-	s.api("POST /api/catalog/download", func(w http.ResponseWriter, r *http.Request) (any, error) {
-		b := body(r)
-		cat := str(b["category"])
-		if cat == "" {
-			cat = s.M.Settings.CatalogCategory
-		}
-		if cat == "" {
-			cat = "Default"
-		}
-		jobs, bad := []string{}, []string{}
-		for _, id := range strList(b["ids"]) {
-			e, ok := s.Cat.ByID(id)
-			if !ok {
-				bad = append(bad, id)
-				continue
-			}
-			j, err := s.M.Add(e.Link, catalog.JobName(e, 90), cat, "", "", b["plan_only"] == true, nil)
-			if err != nil {
-				bad = append(bad, e.Title+": "+err.Error())
-				continue
-			}
-			jobs = append(jobs, j.ID)
-		}
-		if cat != s.M.Settings.CatalogCategory {
-			s.M.Settings.CatalogCategory = cat
-			_ = s.M.SaveSettings()
-		}
-		return map[string]any{"jobs": jobs, "errors": bad}, nil
-	})
+	s.planRoutes()
 
 	// shares
 	s.api("POST /api/shares/open", func(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -729,21 +719,6 @@ func (s *Server) routes() {
 		}
 		return j.View(true), nil
 	})
-	s.api("POST /api/jobs", func(w http.ResponseWriter, r *http.Request) (any, error) {
-		b := body(r)
-		jobs, bad := s.M.AddMany(str(b["text"]), str(b["category"]), str(b["name"]), str(b["password"]), str(b["archive_password"]), b["plan_only"] == true)
-		if len(jobs) == 0 && len(bad) == 0 {
-			return nil, fail(400, "no usn:// or usenet:// links in that text", "no_links")
-		}
-		ids := []string{}
-		for _, j := range jobs {
-			ids = append(ids, j.ID)
-		}
-		if bad == nil {
-			bad = []string{}
-		}
-		return map[string]any{"jobs": ids, "errors": bad}, nil
-	})
 	s.api("POST /api/jobs/{id}/stop", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		return map[string]any{"ok": s.M.Stop(r.PathValue("id"))}, nil
 	})
@@ -884,24 +859,70 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 			if isRunning != pass || len(transfer) >= 4 {
 				continue
 			}
-			transfer = append(transfer, map[string]any{"id": j.JobID, "name": j.Name, "state": j.State, "phase": j.Phase, "bytes": j.Bytes,
+			transfer = append(transfer, map[string]any{"id": j.JobID, "name": j.Name, "picked": j.Picked, "state": j.State, "phase": j.Phase, "bytes": j.Bytes,
 				"size": j.Size, "rate": j.Rate, "eta": j.ETA, "file_pos": j.FilePos, "current": j.Current, "missing": j.Missing, "detail": j.Detail})
 		}
 	}
+	// the jobs that finished last, so the browser can say when one is done or failed
+	recent := []map[string]any{}
+	for _, j := range s.M.History() {
+		if len(recent) >= 6 {
+			break
+		}
+		if j.Finished == nil {
+			continue
+		}
+		recent = append(recent, map[string]any{"id": j.JobID, "name": j.Name, "picked": j.Picked, "state": j.State, "detail": j.Detail,
+			"finished": *j.Finished, "share": app.LinkID(j.Link)})
+	}
 	return map[string]any{"version": s.Version, "accounts": accounts, "needs_setup": accounts == "", "disk": disk, "active": len(q), "throttle": s.M.Throttle(), "setup_done": s.M.Settings.SetupDone,
-		"transfer": transfer, "can_restart": s.Restart != nil,
+		"transfer": transfer, "can_restart": s.Restart != nil, "recent": recent,
 		"running": running, "speed": speed, "open_shares": open, "runtime": runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
 		"python": runtime.Version(), "data_dir": s.M.DataDir}, nil
 }
 
+// cover is how much of a share its jobs have downloaded between them.
+type cover struct {
+	ids   []string
+	of    int  // the share's files, as its last planned job counted them
+	whole bool // a download of the whole share completed
+}
+
 func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error) {
 	jobs := map[string]app.JobView{}
-	h := s.M.History()
+	covers := map[string]*cover{}
+	h, q := s.M.History(), s.M.Queue()
 	for i := len(h) - 1; i >= 0; i-- { // oldest first, active last: newest wins
 		jobs[h[i].Link] = h[i]
 	}
-	for _, j := range s.M.Queue() {
+	for _, j := range q {
 		jobs[j.Link] = j
+	}
+	for _, j := range append(append([]app.JobView{}, h...), q...) {
+		c := covers[j.Link]
+		if c == nil {
+			c = &cover{}
+			covers[j.Link] = c
+		}
+		c.ids = append(c.ids, j.JobID)
+		if j.FileCount != nil && *j.FileCount > c.of {
+			c.of = *j.FileCount
+		}
+		if j.State == "completed" && j.Selected == nil {
+			c.whole = true
+		}
+	}
+	got := func(link string) any {
+		c := covers[link]
+		if c == nil {
+			return nil
+		}
+		files := s.M.Store.DoneDistinct(c.ids)
+		if files == 0 && !c.whole {
+			return nil
+		}
+		complete := c.whole || (c.of > 0 && files >= int64(c.of))
+		return map[string]any{"files": files, "of": c.of, "complete": complete}
 	}
 	infos := s.M.Store.AllShareInfo()
 	entries := s.Cat.Snapshot()
@@ -913,7 +934,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 		}
 		var jv, sh, health any
 		if j, ok := jobs[e.Link]; ok {
-			jv = map[string]any{"id": j.JobID, "state": j.State, "bytes": j.Bytes, "size": j.Size, "rate": j.Rate}
+			jv = map[string]any{"id": j.JobID, "state": j.State, "bytes": j.Bytes, "size": j.Size, "rate": j.Rate, "picked": j.Picked, "detail": j.Detail}
 		}
 		if info := infos[e.Link]; info != nil {
 			if info["size"] != nil {
@@ -929,7 +950,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 		}
 		out = append(out, map[string]any{"id": app.LinkID(e.Link), "link": e.Link, "title": e.Title, "variant": e.Variant, "listed": e.Listed,
 			"listed_size": e.Size, "source": e.Source, "sku": e.SKU, "info": e.Info, "also": also, "added": e.Added,
-			"name": catalog.JobName(e, 90), "job": jv, "share": sh, "health": health})
+			"name": catalog.JobName(e, 90), "job": jv, "share": sh, "health": health, "got": got(e.Link)})
 	}
 	srcs := []string{}
 	for k := range sources {
@@ -1178,7 +1199,7 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) (any, err
 		cat = "Default"
 	}
 	j, err := s.M.AddJob(ss.Link, app.AddOptions{Name: s.jobNameFor(ss, strings.TrimSpace(str(b["name"]))), Category: cat,
-		FileSel: sel.sel, ExtractMode: mode, Existing: str(b["existing"])})
+		FileSel: sel.sel, ExtractMode: mode, Existing: str(b["existing"]), Picked: pickedLabel(sel), Size: sel.size})
 	if err != nil {
 		return nil, err
 	}
@@ -1283,6 +1304,8 @@ func (s *Server) settingsView() map[string]any {
 	m["accounts"] = accts
 	m["web"] = map[string]any{"host": st.Web.Host, "port": st.Web.Port, "has_password": st.Web.PasswordHash != ""}
 	m["sab_ini"] = app.SabIniDefault()
+	sz, ur := extract.FindTools(st.SevenZipPath, st.UnrarPath)
+	m["tools"] = map[string]any{"sevenzip": sz, "unrar": ur} // what extraction would use ("" = not found)
 	return m
 }
 

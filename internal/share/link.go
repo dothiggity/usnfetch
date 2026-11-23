@@ -45,14 +45,14 @@ func DecodeLink(link string) (string, error) {
 		return link, nil
 	}
 	if !strings.HasPrefix(link, "usn://") {
-		return "", errors.New("not a share link (expected usn://… or usenet://…)")
+		return "", errors.New("not a share link: share links start with usn:// (or usenet://)")
 	}
 	data, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(link[6:], "="))
 	if err != nil {
-		return "", fmt.Errorf("share link: bad base64: %w", err)
+		return "", errors.New("this isn't a complete usn:// link: check that it was copied in full")
 	}
 	if len(data) < 2 {
-		return "", errors.New("share link is too short to decode")
+		return "", errors.New("this usn:// link is too short: check that it was copied in full")
 	}
 	switch data[0] {
 	case 2:
@@ -65,7 +65,7 @@ func DecodeLink(link string) (string, error) {
 		p := 1
 		need := func(n int) error {
 			if p+n > len(data) {
-				return errors.New("truncated v1 share link")
+				return errors.New("this usn:// link is cut short: check that it was copied in full")
 			}
 			return nil
 		}
@@ -99,7 +99,7 @@ func DecodeLink(link string) (string, error) {
 		}
 		return out, nil
 	}
-	return "", fmt.Errorf("share link uses an unknown encoding (version %d)", data[0])
+	return "", fmt.Errorf("this usn:// link uses an unknown encoding (version %d): check that it was copied in full", data[0])
 }
 
 // ParseLink parses usn:// and usenet:// share links.

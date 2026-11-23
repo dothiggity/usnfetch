@@ -20,6 +20,9 @@ func fallbackTitle(link string) string {
 	return pyPrefix(link, 24)
 }
 
+// FallbackTitle is the title an entry gets when its listing names none.
+func FallbackTitle(link string) string { return fallbackTitle(link) }
+
 // shareFolderID extracts the folder id from a share link. In its usenet:// form the path is
 // an optional group, the manifest article ids joined by '+', the folder id, then optionally
 // the publisher fingerprint, with an optional key after '#'.

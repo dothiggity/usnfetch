@@ -48,7 +48,9 @@ usnfetch opens the share links you already have. There are three ways in:
 - **Catalog → Import list.** Pick a file or paste text. Anything with `usn://` links in it works:
   a plain list, a CSV, even a saved web page. If the list is one of those exports with `SOURCE:`
   headings, titles with `[size]` and `SKU:` lines, each share also gets its proper name and listed
-  size. Importing the same list again later only adds the new ones.
+  size. Importing a list again adds the new links and fills in anything the catalog didn't know.
+  If it lists a share you already have under a different title or size, it shows you the
+  difference first and keeps what you have unless you tick otherwise. There's an Undo, too.
 - **Catalog → Open link.** Paste a single link to look inside that share before deciding.
 - **Activity → Add links.** Paste one or more links to download them whole, no browsing.
 
@@ -70,7 +72,7 @@ zipped.
 
 While things download, a bar along the bottom of every page shows what's going on: the job, the
 file it's on, progress, ETA, speed and free space, with a pause button. The Activity page has the
-full queue (drag jobs to reorder them) and the history. You can pause for a while, set a speed
+full queue (drag jobs to reorder them, or hold one back with its own pause) and the history. You can pause for a while, set a speed
 limit, or set a weekly schedule, say slower during the day and full speed at night.
 
 On Windows, right-click usnfetch next to the clock to open the app, pause, restart it, or have it

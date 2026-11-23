@@ -172,6 +172,21 @@ func (s *Store) ResetDone(jobID string) error {
 	return err
 }
 
+// DoneDistinct: how many different share paths these jobs (of one share) finished between them.
+func (s *Store) DoneDistinct(jobIDs []string) int64 {
+	if len(jobIDs) == 0 {
+		return 0
+	}
+	args := make([]any, len(jobIDs))
+	for i, id := range jobIDs {
+		args[i] = id
+	}
+	var n int64
+	q := "SELECT COUNT(DISTINCT path) FROM job_done WHERE job_id IN (?" + strings.Repeat(",?", len(jobIDs)-1) + ")"
+	_ = s.db.QueryRow(q, args...).Scan(&n)
+	return n
+}
+
 func (s *Store) DonePaths(jobID string) ([]string, error) {
 	rows, err := s.db.Query("SELECT path FROM job_done WHERE job_id = ?", jobID)
 	if err != nil {

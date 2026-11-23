@@ -64,7 +64,12 @@ func (l *Limiter) Wait(stop <-chan struct{}, n int64) bool {
 	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {
-	case <-stop:
+	case <-stop: // not fetched after all: give the bytes back, or the next job pays for them
+		l.mu.Lock()
+		if changed == l.changed { // a rate change has reset the bucket since
+			l.tokens += float64(n)
+		}
+		l.mu.Unlock()
 		return false
 	case <-changed: // a new rate: go on (a lower one throttles the next reservation)
 		return true

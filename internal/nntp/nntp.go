@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -44,12 +45,38 @@ type Conn struct {
 	timeout time.Duration
 }
 
+// LoginError: the server turned the username or password down.
+type LoginError struct{ Server, Reply string }
+
+func (e *LoginError) Error() string {
+	return fmt.Sprintf("%s rejected the username or password (%s)", e.Server, e.Reply)
+}
+
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// dialErr says in plain words why connecting failed, and what to check.
+func dialErr(a *Account, err error) error {
+	var dns *net.DNSError
+	switch {
+	case errors.As(err, &dns):
+		return fmt.Errorf("can't find the server %s: check its name", a.Server)
+	case isTimeout(err):
+		return fmt.Errorf("no answer from %s on port %d: check the server name and port", a.Server, a.Port)
+	case errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "refused"):
+		return fmt.Errorf("%s refused the connection on port %d: check the port (usually 563 with SSL, 119 without)", a.Server, a.Port)
+	}
+	return fmt.Errorf("can't connect to %s on port %d: %v", a.Server, a.Port, err)
+}
+
 // Dial connects, reads the greeting and logs in.
 func Dial(a *Account, timeout time.Duration) (*Conn, error) {
 	addr := net.JoinHostPort(a.Server, fmt.Sprint(a.Port))
 	raw, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
-		return nil, err
+		return nil, dialErr(a, err)
 	}
 	if tc, ok := raw.(*net.TCPConn); ok {
 		_ = tc.SetReadBuffer(4 << 20)
@@ -60,7 +87,10 @@ func Dial(a *Account, timeout time.Duration) (*Conn, error) {
 		_ = tc.SetDeadline(time.Now().Add(timeout))
 		if err := tc.Handshake(); err != nil {
 			raw.Close()
-			return nil, err
+			if isTimeout(err) {
+				return nil, fmt.Errorf("no SSL answer from %s on port %d: check the port and the SSL setting", a.Server, a.Port)
+			}
+			return nil, fmt.Errorf("SSL did not work with %s on port %d: check that this port uses SSL (%v)", a.Server, a.Port, err)
 		}
 		c = tc
 	}
@@ -68,11 +98,14 @@ func Dial(a *Account, timeout time.Duration) (*Conn, error) {
 	greet, err := conn.readLine()
 	if err != nil {
 		c.Close()
-		return nil, err
+		if !a.SSL {
+			return nil, fmt.Errorf("%s did not greet on port %d: if this port uses SSL, turn SSL on (%v)", a.Server, a.Port, err)
+		}
+		return nil, fmt.Errorf("%s did not greet on port %d: %v", a.Server, a.Port, err)
 	}
 	if !strings.HasPrefix(greet, "20") {
 		c.Close()
-		return nil, fmt.Errorf("nntp: bad greeting %q", greet)
+		return nil, fmt.Errorf("%s turned the connection away (%s): too many connections open, or the account is not active", a.Server, greet)
 	}
 	if a.User != "" {
 		r, err := conn.Cmd("AUTHINFO USER " + a.User)
@@ -85,7 +118,7 @@ func Dial(a *Account, timeout time.Duration) (*Conn, error) {
 		}
 		if !strings.HasPrefix(r, "281") {
 			c.Close()
-			return nil, fmt.Errorf("nntp: login failed: %s", r)
+			return nil, &LoginError{Server: a.Server, Reply: r}
 		}
 	}
 	return conn, nil

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 
 	"usnfetch/internal/app"
@@ -60,6 +62,66 @@ func (s *Server) setupRoutes() {
 		s.M.Settings.SetupDone = true
 		return map[string]any{"ok": true}, s.M.SaveSettings()
 	})
+	s.api("GET /api/fs/folders", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return listFolders(r.URL.Query().Get("path"))
+	})
+}
+
+// listFolders lists the folders in one folder, for picking a folder in the browser;
+// "" lists the drives (Windows) or "/", and the home folder.
+func listFolders(p string) (map[string]any, error) {
+	p = strings.TrimSpace(p)
+	folders := []map[string]any{}
+	if p == "" {
+		if runtime.GOOS == "windows" {
+			for c := 'C'; c <= 'Z'; c++ {
+				d := string(c) + `:\`
+				if _, err := os.Stat(d); err == nil {
+					folders = append(folders, map[string]any{"name": d, "path": d})
+				}
+			}
+		} else {
+			folders = append(folders, map[string]any{"name": "/", "path": "/"})
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			folders = append(folders, map[string]any{"name": "Home (" + home + ")", "path": home})
+		}
+		return map[string]any{"path": "", "parent": nil, "folders": folders}, nil
+	}
+	if !filepath.IsAbs(p) {
+		return nil, fail(400, `use a full path, such as D:\Downloads`, "bad_folder")
+	}
+	p = filepath.Clean(p)
+	ents, err := os.ReadDir(p)
+	if err != nil {
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return nil, fail(400, "can't open "+p+": "+err.Error(), "bad_folder")
+	}
+	for _, e := range ents {
+		name := e.Name()
+		if !e.IsDir() || strings.HasPrefix(name, "$") || name == "System Volume Information" {
+			continue
+		}
+		folders = append(folders, map[string]any{"name": name, "path": filepath.Join(p, name)})
+		if len(folders) >= 3000 {
+			break
+		}
+	}
+	sort.Slice(folders, func(i, j int) bool {
+		return strings.ToLower(folders[i]["name"].(string)) < strings.ToLower(folders[j]["name"].(string))
+	})
+	var parent any = ""
+	if up := filepath.Dir(p); up != p {
+		parent = up
+	}
+	out := map[string]any{"path": p, "parent": parent, "folders": folders}
+	if free, err := app.DiskFree(p); err == nil {
+		out["free"] = free
+	}
+	return out, nil
 }
 
 // folderCheck: whether a folder can be used for downloads -- a full path, on a drive that
