@@ -40,6 +40,10 @@ func consoleProcesses() int {
 	return int(n)
 }
 
+// doubleClicked reports whether usnfetch was started on its own, from Explorer or a shortcut,
+// rather than from a terminal: then it is the only process on its console.
+func doubleClicked() bool { return consoleProcesses() == 1 }
+
 func messageBox(text string, icon uintptr) { // 0x10 error, 0x40 information
 	t, _ := windows.UTF16PtrFromString("usnfetch")
 	m, _ := windows.UTF16PtrFromString(text)

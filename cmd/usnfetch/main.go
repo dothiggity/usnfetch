@@ -291,6 +291,9 @@ next to the program to keep everything beside it instead.
 
 func main() {
 	if len(os.Args) < 2 {
+		if doubleClicked() { // usnfetch.exe double-clicked: run in the tray and open the web app
+			os.Exit(cmdTray(nil))
+		}
 		usage()
 		os.Exit(2)
 	}

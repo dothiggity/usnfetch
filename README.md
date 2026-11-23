@@ -18,12 +18,13 @@ shares either. You bring your own links, and what you download is up to you.
 There's nothing to install. Builds are going to live on the Releases page; until the first one is
 up, building it yourself takes one command (see further down).
 
-Unzip it wherever you like and run it:
+Unzip it wherever you like. On Windows, double-click `usnfetch.exe`: it settles in next to the
+clock and opens the web page in your browser. From a terminal it's:
 
-    usnfetch tray        # Windows: runs quietly with an icon by the clock
+    usnfetch tray        # Windows: the same as double-clicking
     usnfetch serve       # anywhere: runs in the terminal
 
-Then open http://localhost:7979/. The first time, a short setup walks you through it:
+The web page is at http://localhost:7979/. The first time, a short setup walks you through it:
 
 1. **Your Usenet provider.** Server, port, username, password and how many connections your plan
    allows. It tests the connection for you. If SABnzbd is installed on the same machine, it can
@@ -72,10 +73,9 @@ file it's on, progress, ETA, speed and free space, with a pause button. The Acti
 full queue (drag jobs to reorder them) and the history. You can pause for a while, set a speed
 limit, or set a weekly schedule, say slower during the day and full speed at night.
 
-On Windows the tray icon tells you the state at a glance: cyan when idle, red while it's
-downloading, grey when paused. Right-click it to open the app, pause, or have it start with
-Windows. Windows 11 tends to hide new tray icons behind the ^ arrow, so drag it out if you want to
-keep it in view.
+On Windows, right-click usnfetch next to the clock to open the app, pause, restart it, or have it
+start with Windows. Windows 11 tends to tuck new ones behind the ^ arrow, so drag it out if you
+want to keep it in view.
 
 The look is up to you too: menu on the left, across the top or as a slim icon bar, dark or light,
 roomy or compact. That's remembered per browser.
