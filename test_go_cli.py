@@ -2,7 +2,7 @@
 """End-to-end tests of the usnfetch command line (bin/usnfetch.exe, or $USNFETCH_BIN) against
 the fake NNTP server and share publisher in test_rig.py: list, fetch with faults, resume,
 sharded and ragged indexes, packed small files, signatures."""
-import hashlib, json, os, sqlite3, subprocess, sys, tempfile, time
+import hashlib, json, os, shutil, sqlite3, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_rig
 
@@ -119,6 +119,7 @@ def main():
         assert rc != 0 and why in err, (why, rc, err[-600:])
     print("PASS signatures: tampering, wrong owner pin, missing pin refused")
 
+    shutil.rmtree(work, ignore_errors=True)        # kept when an assertion fails, for a look
     print("GO CLI PASS")
 
 if __name__ == "__main__":

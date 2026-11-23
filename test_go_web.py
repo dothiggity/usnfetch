@@ -2,7 +2,7 @@
 """End-to-end test of the Go web app (bin/usnfetch.exe serve) against the fake NNTP rig, over real HTTP:
 catalog import -> open share -> tree -> range streaming (segmented + packed) -> availability
 check -> download ticked files -> settings never leak passwords -> web password + login."""
-import http.cookiejar, io, json, os, socket, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request, zipfile
+import http.cookiejar, io, json, os, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.error, urllib.parse, urllib.request, zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_rig
 
@@ -37,12 +37,23 @@ def wait_for(fn, timeout=60, what="condition"):
         time.sleep(0.2)
     raise AssertionError(f"timeout waiting for {what}")
 
+WORKDIRS = []
+
+
+def workdir(prefix):
+    """A temp folder for one scenario; removed when the whole suite passes (kept on failure)."""
+    d = tempfile.mkdtemp(prefix=prefix)
+    WORKDIRS.append(d)
+    return d
+
+
 def start_server(work):
     """Start usnfetch serve on a data folder; returns (process, client)."""
     with socket.socket() as so:
         so.bind(("127.0.0.1", 0)); port = so.getsockname()[1]
     log = open(os.path.join(work, "server.log"), "w")
     proc = subprocess.Popen([GO, "serve", "--data", work, "--port", str(port)], stdout=log, stderr=subprocess.STDOUT)
+    proc.log = log
     c = Client(f"http://127.0.0.1:{port}")
     wait_for(lambda: c.call("GET", "/api/session")[0] == 200 if proc.poll() is None else (_ for _ in ()).throw(AssertionError(open(os.path.join(work, "server.log")).read())), 20, "go web server")
     return proc, c
@@ -54,13 +65,14 @@ def stop(proc):
         proc.wait(10)
     except subprocess.TimeoutExpired:
         proc.kill()
+    proc.log.close()
 
 
 def setup_and_priorities():
     """First-run setup over the API, the older single-account settings moved into the provider
     list, and provider priorities: an article missing at priority 0 comes from priority 1."""
     # 1. a fresh install: setup needed, folder checks, finish refused without a provider
-    work = tempfile.mkdtemp(prefix="usngoweb_setup_")
+    work = workdir("usngoweb_setup_")
     proc, c = start_server(work)
     try:
         st = c.call("GET", "/api/status")[1]
@@ -85,7 +97,7 @@ def setup_and_priorities():
     assert saved["setup_done"] and "nntp" not in saved and saved["accounts"][1]["priority"] == 3, saved
 
     # 2. an older settings file: its single account becomes the first provider, setup counts as done
-    work = tempfile.mkdtemp(prefix="usngoweb_legacy_")
+    work = workdir("usngoweb_legacy_")
     with open(os.path.join(work, "usnfetch_gui.json"), "w", encoding="utf-8") as f:
         json.dump({"nntp": {"server": "old.example.invalid", "port": 563, "ssl": True, "username": "olduser", "password": "oldpw", "connections": 12},
                    "accounts": [], "complete_dir": os.path.join(work, "complete")}, f)
@@ -99,7 +111,7 @@ def setup_and_priorities():
         stop(proc)
 
     # 3. priorities in a real download: segment 17 is on neither copy at the priority-0 server
-    work = tempfile.mkdtemp(prefix="usngoweb_prio_")
+    work = workdir("usngoweb_prio_")
     big = os.urandom(20 * 700000 + 31)
     sh = test_rig.build_share_files([("Prio/disk.img", big)], work, faults=True)
     main_srv = test_rig.FakeNNTP(sh["articles"], password=NNTP_PW); main_srv.start()
@@ -124,7 +136,7 @@ def setup_and_priorities():
 
 
 def main():
-    work = tempfile.mkdtemp(prefix="usngoweb_")
+    work = workdir("usngoweb_")
     big, readme, sub = os.urandom(3 * 700000 + 77), b"hello from a packed file\n" * 40, os.urandom(30000)
     rom = os.urandom(5000)
     zbuf = io.BytesIO()
@@ -371,6 +383,8 @@ def main():
             proc.kill()
         log.close()
     setup_and_priorities()
+    for d in WORKDIRS:
+        shutil.rmtree(d, ignore_errors=True)
     print("GO WEB PASS")
 
 if __name__ == "__main__":
