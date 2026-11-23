@@ -1292,12 +1292,24 @@ async function pageSystem() {
   const cards = h("div", { class: "cards" });
   const logs = h("div", { class: "loglines tall" });
   const follow = h("input", { type: "checkbox", checked: true });
-  toolbar(h("label", { class: "check" }, follow, "Follow log"));
+  const restartBtn = h("button", { class: "btn hidden", title: "Stop and start usnfetch again; downloads carry on where they were", onclick: async () => {
+    if (!(await confirmBox("Restart usnfetch", "usnfetch stops and starts again. Downloads pause for a moment and carry on where they were.", "Restart"))) return;
+    try { await api("/system/restart", { body: {} }); } catch (e) { fail(e); return; }
+    toast("Restarting…");
+    await new Promise((r) => setTimeout(r, 2500));
+    for (let i = 0; i < 40; i++) {      // back up? then reload
+      try { const r = await fetch("/api/session", { credentials: "same-origin" }); if (r.ok) { location.reload(); return; } } catch { /* not yet */ }
+      await new Promise((r) => setTimeout(r, 750));
+    }
+    toast("usnfetch has not come back yet; check the tray icon", "bad");
+  } }, icon("refresh"), "Restart");
+  toolbar(restartBtn, h("label", { class: "check" }, follow, "Follow log"));
   $("#view").append(cards, h("div", { class: "panel" }, h("div", { class: "head" }, icon("system"), h("h2", {}, "Log")), h("div", { class: "body" }, logs)));
   let seq = 0;
   every(2000, async () => {
     try {
       const st = await api("/status");
+      restartBtn.classList.toggle("hidden", !st.can_restart);
       put(cards, 
         h("div", { class: "card" }, h("div", { class: "k" }, "Version"), h("div", { class: "v" }, st.version), h("div", { class: "s" }, st.runtime || ("Python " + st.python))),
         h("div", { class: "card" }, h("div", { class: "k" }, "Free space"), h("div", { class: "v" }, fmtBytes(st.disk.free)), h("div", { class: "s", title: st.disk.path }, st.disk.path)),

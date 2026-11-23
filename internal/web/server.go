@@ -47,6 +47,7 @@ type Server struct {
 	Cat     *app.Catalog
 	Static  fs.FS
 	DevDir  string // serve the UI from this folder instead (design iteration)
+	Restart func() // set when usnfetch can restart itself (tray mode); nil otherwise
 
 	cache     *engine.SegmentCache
 	smu       sync.Mutex
@@ -500,6 +501,14 @@ func (s *Server) routes() {
 		return map[string]any{"ok": true}, nil
 	})
 	s.api("GET /api/status", s.status)
+	s.api("POST /api/system/restart", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if s.Restart == nil {
+			return nil, fail(400, "usnfetch can restart itself when it runs in the tray (usnfetch tray)", "no_restart")
+		}
+		s.M.Log("restart asked for in the web app")
+		go func() { time.Sleep(300 * time.Millisecond); s.Restart() }() // answer first
+		return map[string]any{"ok": true}, nil
+	})
 	s.setupRoutes()
 	s.api("GET /api/logs", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
@@ -880,8 +889,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 		}
 	}
 	return map[string]any{"version": s.Version, "accounts": accounts, "needs_setup": accounts == "", "disk": disk, "active": len(q), "throttle": s.M.Throttle(), "setup_done": s.M.Settings.SetupDone,
-		"transfer": transfer,
-		"running":  running, "speed": speed, "open_shares": open, "runtime": runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
+		"transfer": transfer, "can_restart": s.Restart != nil,
+		"running": running, "speed": speed, "open_shares": open, "runtime": runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
 		"python": runtime.Version(), "data_dir": s.M.DataDir}, nil
 }
 

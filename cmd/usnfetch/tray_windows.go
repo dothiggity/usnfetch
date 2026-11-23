@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -157,9 +158,46 @@ func cmdTray(args []string) int {
 	if browser {
 		openBrowser(r.URL)
 	}
+	var restart atomic.Bool
+	r.Web.Restart = func() { restart.Store(true); systray.Quit() }
 	systray.Run(func() { trayMenu(r, o) }, func() {})
-	r.Stop()
+	r.Stop() // checkpoints saved, port and data folder free again
+	if restart.Load() {
+		if err := relaunch(args); err != nil {
+			messageBox("usnfetch could not start again:\n\n"+err.Error(), 0x10)
+			return 1
+		}
+	}
 	return 0
+}
+
+// relaunch starts a new copy of usnfetch with the same options, detached from this one
+// and, where allowed, from whatever started this one (so it outlives it).
+func relaunch(args []string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	a := append([]string{"tray"}, args...)
+	quiet := false
+	for _, x := range args {
+		quiet = quiet || x == "--no-browser"
+	}
+	if !quiet {
+		a = append(a, "--no-browser") // the browser is already open
+	}
+	fmt.Fprintf(os.Stderr, "%s restarting\n", time.Now().Format("[15:04:05]"))
+	const detached, newGroup, breakaway = 0x00000008, 0x00000200, 0x01000000
+	for _, flags := range []uint32{detached | newGroup | breakaway, detached | newGroup} {
+		cmd := exec.Command(exe, a...)
+		cmd.Env = append(os.Environ(), "USNFETCH_TRAY_CHILD=1")
+		cmd.Dir, _ = os.Getwd()
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: flags}
+		if err = cmd.Start(); err == nil {
+			return cmd.Process.Release()
+		}
+	}
+	return err
 }
 
 // The tray icons, built from assets/icons by assets/make_icons.py.
@@ -190,6 +228,7 @@ func trayMenu(r *running, o serveOpts) {
 	p180 := later.AddSubMenuItem("3 hours", "")
 	systray.AddSeparator()
 	auto := systray.AddMenuItemCheckbox("Start with Windows", "Start usnfetch here when you sign in", autostartOn())
+	restartItem := systray.AddMenuItem("Restart usnfetch", "Stop and start again (downloads carry on where they were)")
 	quit := systray.AddMenuItem("Quit", "Stop usnfetch (downloads resume next time)")
 
 	wasPaused := false
@@ -270,6 +309,9 @@ func trayMenu(r *running, o serveOpts) {
 					auto.Uncheck()
 				}
 				continue
+			case <-restartItem.ClickedCh:
+				r.Web.Restart()
+				return
 			case <-quit.ClickedCh:
 				systray.Quit()
 				return

@@ -164,6 +164,8 @@ def main():
             code, png, hd = c.call("GET", f"/static/icon-{state}.png", raw=True)
             assert code == 200 and png[:8] == b"\x89PNG\r\n\x1a\n" and hd["Content-Type"] == "image/png", (state, code)
         assert b"/static/icon-idle.png" in page
+        assert c.call("GET", "/api/status")[1]["can_restart"] is False          # only the tray copy restarts itself
+        assert c.call("POST", "/api/system/restart", {})[0] == 400
         code, sess, _ = c.call("GET", "/api/session")
         assert sess["logged_in"] and not sess["auth_required"], sess
 

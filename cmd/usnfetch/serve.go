@@ -54,6 +54,7 @@ func parseServe(name string, args []string) serveOpts {
 // running is a started web app.
 type running struct {
 	M    *app.Manager
+	Web  *web.Server
 	URL  string // what a browser on this machine opens
 	hs   *http.Server
 	Done chan error // the HTTP server ended
@@ -90,7 +91,7 @@ func startServe(o serveOpts) (*running, error) {
 		m.Shutdown(time.Second)
 		return nil, err
 	}
-	r := &running{M: m, URL: fmt.Sprintf("http://%s:%d/", shown, p), hs: &http.Server{Handler: srv, ReadHeaderTimeout: 30 * time.Second}, Done: make(chan error, 1)}
+	r := &running{M: m, Web: srv, URL: fmt.Sprintf("http://%s:%d/", shown, p), hs: &http.Server{Handler: srv, ReadHeaderTimeout: 30 * time.Second}, Done: make(chan error, 1)}
 	fmt.Fprintf(os.Stderr, "usnfetch %s: %s  (data: %s)\n", Version, r.URL, o.data)
 	if ip := net.ParseIP(h); (ip == nil || !ip.IsLoopback()) && m.Settings.Web.PasswordHash == "" {
 		fmt.Fprintln(os.Stderr, "note: other computers are refused until a web password is set (Settings → Web access on this machine, or: usnfetch set-password)")
