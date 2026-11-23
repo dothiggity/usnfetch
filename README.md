@@ -18,7 +18,7 @@ shares either. You bring your own links, and what you download is up to you.
 There's nothing to install. Builds are going to live on the Releases page; until the first one is
 up, building it yourself takes one command (see further down).
 
-Put the program in a folder of its own and run it:
+Unzip it wherever you like and run it:
 
     usnfetch tray        # Windows: runs quietly with an icon by the clock
     usnfetch serve       # anywhere: runs in the terminal
@@ -101,9 +101,16 @@ On Linux you'll probably want it as a service. Something like this in
 
 ## Where it keeps things
 
-Settings, the catalog, job history and a cache of share indexes all live in one data folder. By
-default that's the folder the program is in; `--data <folder>` puts it somewhere else. The share
-index cache takes roughly 200 MB per TB of share, and old entries are cleaned up on their own.
+Settings, the catalog, job history and a cache of share indexes all live in one data folder:
+`%LOCALAPPDATA%\usnfetch` on Windows, `~/.local/share/usnfetch` on Linux. It's kept apart from the
+program on purpose, so you can replace `usnfetch.exe` with a newer one, or move it, and everything
+carries on. `--data <folder>` puts it somewhere else.
+
+If you'd rather keep everything next to the program, say on a USB stick, create an empty file
+called `portable` in the same folder as `usnfetch.exe`.
+
+The share index cache takes roughly 200 MB per TB of share, and old entries are cleaned up on their
+own.
 Provider passwords are encrypted with Windows' own data protection, so only your Windows account can
 read them.
 
@@ -144,29 +151,10 @@ A quick map of the code:
     internal/extract/  finding and unpacking archives (7-Zip / UnRAR)
     internal/web/      the web API: shares, gallery, files already on disk, setup
     web/               the browser UI
-    assets/            the icon artwork
-
-### The icons
-
-The artwork lives in `assets/icons` (`source-idle.png` and `source-busy.png`).
-`python assets/make_icons.py` (needs Pillow) turns those into the tray icons and the browser icons;
-the grey paused icon is made from the idle one. The icon on `usnfetch.exe` itself comes from the
-`cmd/usnfetch/rsrc_windows_*.syso` files. If you change the idle icon, regenerate them from inside
-`cmd/usnfetch`:
-
-    go run github.com/tc-hib/go-winres@v0.3.3 simply --icon icons\idle.ico --arch amd64,arm64
 
 ## Tests
 
     go test ./...
-    pip install -r requirements-test.txt
-    python test_go_cli.py
-    python test_go_web.py
-
-The two Python scripts run the real program against a fake Usenet server and a fake share publisher
-(`test_rig.py`), so they cover everything from parsing links to finished, verified downloads. They
-test `bin/usnfetch.exe` unless you point `USNFETCH_BIN` at another build. The archive tests want
-7-Zip, and WinRAR's `Rar.exe` if you have it.
 
 ## License
 

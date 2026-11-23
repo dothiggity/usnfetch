@@ -26,13 +26,6 @@ import (
 // Version of the Go build.
 const Version = "0.8.0"
 
-func defaultData() string {
-	if d := os.Getenv("USNFETCH_DATA"); d != "" {
-		return d
-	}
-	return exeDir()
-}
-
 type serveOpts struct {
 	host      string
 	port      int

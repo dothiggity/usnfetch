@@ -44,7 +44,7 @@ type netFlags struct {
 func addCommon(fs *flag.FlagSet, n *netFlags) {
 	fs.StringVar(&n.link, "link", "", "usn:// or usenet:// share link")
 	fs.StringVar(&n.password, "password", "", "password for password-protected shares")
-	fs.StringVar(&n.indexDir, "index-dir", "", "folder for the on-disk share indexes (default index_cache next to the program)")
+	fs.StringVar(&n.indexDir, "index-dir", "", "folder for the on-disk share indexes (default index_cache in the data folder)")
 	fs.StringVar(&n.server, "server", "", "NNTP server (or env USNFETCH_SERVER)")
 	fs.IntVar(&n.port, "port", 0, "NNTP port (or env USNFETCH_PORT, default 563)")
 	fs.StringVar(&n.ssl, "ssl", "", "1 or 0 (or env USNFETCH_SSL, default 1)")
@@ -88,7 +88,7 @@ func (n *netFlags) load() (*share.Index, *engine.AccountSet, error) {
 	}
 	dir := n.indexDir
 	if dir == "" {
-		dir = filepath.Join(exeDir(), "index_cache")
+		dir = filepath.Join(defaultData(), "index_cache")
 	}
 	set, _ := engine.NewAccountSet([]*nntp.Account{a})
 	ix, err := share.LoadShare(n.link, share.LoadOpts{Accounts: set.All(), Password: n.password, IndexDir: dir, Log: func(s string) { logf("%s", s) }})
@@ -282,6 +282,10 @@ func usage() {
 
 account flags: --server --port --ssl 1|0 --user --pass --connections N,
 or env USNFETCH_SERVER / USNFETCH_PORT / USNFETCH_SSL / USNFETCH_USER / USNFETCH_PASS
+
+data folder (settings, jobs, catalog, share indexes): --data DIR, or env USNFETCH_DATA, or
+%LOCALAPPDATA%\usnfetch (~/.local/share/usnfetch on Linux). Put a file named "portable"
+next to the program to keep everything beside it instead.
 `)
 }
 

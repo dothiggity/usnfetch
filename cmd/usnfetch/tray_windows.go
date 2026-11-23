@@ -200,7 +200,7 @@ func relaunch(args []string) error {
 	return err
 }
 
-// The tray icons, built from assets/icons by assets/make_icons.py.
+// The tray icons (idle cyan, busy red, paused grey).
 var (
 	//go:embed icons/idle.ico
 	iconIdle []byte // nothing downloading

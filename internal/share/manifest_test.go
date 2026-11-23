@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// testdata/signed_manifests.json holds a v4 and a v5 manifest signed by test_rig.py's test
-// publisher (a throwaway key, no real share), with the links that pin that key.
+// testdata/signed_manifests.json holds a v4 and a v5 manifest signed by a test publisher
+// (a throwaway key, no real share), with the links that pin that key.
 func TestSignedManifests(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "signed_manifests.json"))
 	if err != nil {
