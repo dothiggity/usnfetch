@@ -1001,6 +1001,38 @@ func commonTop(paths []string) string {
 	return first
 }
 
+// topFolder is commonTop worked out one path at a time, without keeping the paths.
+type topFolder struct {
+	first string
+	n     int
+	none  bool
+}
+
+func (t *topFolder) add(p string) {
+	if t.none {
+		return
+	}
+	s := strings.Trim(p, `/\`)
+	i := strings.IndexAny(s, `/\`)
+	if i < 0 { // a file at the top: no common folder
+		t.none = true
+		return
+	}
+	if t.n == 0 {
+		t.first = s[:i]
+	} else if s[:i] != t.first {
+		t.none = true
+	}
+	t.n++
+}
+
+func (t *topFolder) top() string {
+	if t.none {
+		return ""
+	}
+	return t.first
+}
+
 func (m *Manager) setTask(j *Job, t engine.Task) {
 	j.mu.Lock()
 	j.task = t
@@ -1010,38 +1042,46 @@ func (m *Manager) setTask(j *Job, t engine.Task) {
 // download plans, downloads + verifies the selected files and extracts archives.
 func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (string, string) {
 	s := m.Settings
-	all, err := ix.Files()
-	if err != nil {
-		return "failed", err.Error()
-	}
-	var real []share.FileEntry
-	for _, f := range all {
-		if f.Downloadable() {
-			real = append(real, f)
-		}
-	}
 	j.mu.Lock()
-	j.FileCount = len(real)
-	j.Files = nil
-	if len(real) <= filesKeep {
-		j.Files = make([]FileInfo, 0, len(real))
-		for _, f := range real {
-			j.Files = append(j.Files, FileInfo{f.Path, f.Size, f.SegCount, f.Packed()})
-		}
-	}
 	planOnly := j.PlanOnly
-	j.PlanOnly = false
 	j.mu.Unlock()
-	if planOnly {
-		return "stopped", fmt.Sprintf("%d file(s) listed: choose files, then Resume", len(real))
-	}
-	var chosen []share.FileEntry
-	var paths []string
-	for _, f := range real {
-		if j.Wants(f.Path) {
+	// One pass over the share's files that keeps only what the job needs: how many there
+	// are, a listing for small shares, the picked files and the share's top folder.
+	// (Loading a share of 2.7 million files whole took 1-2 GB for as long as the job ran.)
+	var (
+		count    int
+		listing  = []FileInfo{} // nil once there are more than filesKeep
+		chosen   []share.FileEntry
+		paths    []string
+		shareTop topFolder
+	)
+	err := ix.EachFile(func(f share.FileEntry) error {
+		if !f.Downloadable() {
+			return nil
+		}
+		count++
+		if listing != nil {
+			if count > filesKeep {
+				listing = nil
+			} else {
+				listing = append(listing, FileInfo{f.Path, f.Size, f.SegCount, f.Packed()})
+			}
+		}
+		shareTop.add(f.Path)
+		if !planOnly && j.Wants(f.Path) {
 			chosen = append(chosen, f)
 			paths = append(paths, f.Path)
 		}
+		return nil
+	})
+	if err != nil {
+		return "failed", err.Error()
+	}
+	j.mu.Lock()
+	j.FileCount, j.Files, j.PlanOnly = count, listing, false
+	j.mu.Unlock()
+	if planOnly {
+		return "stopped", fmt.Sprintf("%d file(s) listed: choose files, then Resume", count)
 	}
 	if len(chosen) == 0 {
 		return "failed", "no files selected"
@@ -1049,11 +1089,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	// the folder the job folder stands in for (see Job.Layout)
 	top := commonTop(paths)
 	if j.Layout == LayoutShare {
-		all := make([]string, len(real))
-		for i, f := range real {
-			all[i] = f.Path
-		}
-		top = commonTop(all)
+		top = shareTop.top()
 	}
 	j.mu.Lock()
 	if j.NameAuto && top != "" {

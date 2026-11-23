@@ -67,7 +67,11 @@ func NewBuilder(path string) (*Builder, error) {
 	tmp := fmt.Sprintf("%s.%d-%d.tmp", path, os.Getpid(), tmpSeq)
 	tmpMu.Unlock()
 	_ = os.Remove(tmp)
-	db, err := sql.Open("sqlite", sqliteURI(tmp, "mode=rwc&_pragma=page_size(16384)&_pragma=journal_mode(OFF)&_pragma=synchronous(OFF)&_pragma=cache_size(-524288)&_pragma=temp_store(MEMORY)&_pragma=locking_mode(EXCLUSIVE)"))
+	// A small page cache on purpose: rows go in in key order, so a big cache buys no speed,
+	// and SQLite's memory grows several times faster than the cache it is given (a 512 MB
+	// cache took the build of a 28-million-entry index to ~8 GB, and ~0.5 GB stayed with
+	// the process afterwards). 16 MB: the same build speed in a few hundred MB.
+	db, err := sql.Open("sqlite", sqliteURI(tmp, "mode=rwc&_pragma=page_size(16384)&_pragma=journal_mode(OFF)&_pragma=synchronous(OFF)&_pragma=cache_size(-16384)&_pragma=temp_store(MEMORY)&_pragma=locking_mode(EXCLUSIVE)"))
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +436,29 @@ func scanFile(sc interface{ Scan(...any) error }) (FileEntry, error) {
 	return f, nil
 }
 
-// Files: every file, loaded on first use (a job needs them all; browsing never does).
+// EachFile hands every file to fn, in fid order, without keeping them. A download job
+// looks at all of them but keeps only what it picked: loading a share of 2.7 million
+// files whole (Files) took 1-2 GB for as long as the job ran.
+func (ix *Index) EachFile(fn func(FileEntry) error) error {
+	rows, err := ix.rw.Query("SELECT " + fileCols + " FROM files ORDER BY fid")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		f, err := scanFile(rows)
+		if err != nil {
+			return err
+		}
+		if err := fn(f); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// Files: every file, loaded on first use (the command line's list and fetch; a download
+// job goes through EachFile instead).
 func (ix *Index) Files() ([]FileEntry, error) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
