@@ -175,12 +175,18 @@ const STATE_CHIP = { queued: "", paused: "warn", planning: "info", downloading: 
   completed: "ok", failed: "bad", stopped: "warn" };
 const jobLabel = (j) => (j.picked ? `${j.name} — ${j.picked}` : j.name);
 const stateChip = (s) => h("span", { class: "chip " + (STATE_CHIP[s] ?? "") }, s);
-const VERDICT = { available: ["ok", "Available"], partial: ["warn", "Partial"], missing: ["bad", "Missing"], error: ["", "Check failed"], empty: ["", "Empty"] };
+const VERDICT = { available: ["ok", "Available"], partial: ["warn", "Partial"], missing: ["bad", "Missing"], error: ["", "Check failed"], empty: ["", "Empty"],
+  link_ok: ["plain", "Link OK"], gone: ["bad", "Gone"] };
+// link_ok / gone come from the link check (is the share's manifest still at your provider?);
+// the others from a sample of the share's own articles, checked when it is opened
 function healthChip(hl) {
-  if (!hl || !hl.verdict) return h("span", { class: "faint" }, "—");
+  if (!hl || !hl.verdict) return h("span", { class: "faint", title: "Not checked yet. Opening the share checks it; so does Check links." }, "—");
   const [k, label] = VERDICT[hl.verdict] || ["", hl.verdict];
-  return h("span", { class: "chip " + k, title: hl.sampled ? `${hl.available}/${hl.sampled} sampled articles found · ${ago(hl.checked_at)}` : "" },
-    h("span", { class: "dot" }), label);
+  const when = hl.checked_at ? ago(hl.checked_at) : "";
+  const title = hl.verdict === "link_ok" ? `The share's manifest is at your provider (${when}). Open the share to check a sample of its files.`
+    : hl.verdict === "gone" ? `The share's manifest isn't at any of your providers any more (${when}), so the share can't be opened.`
+    : hl.sampled ? `${hl.available}/${hl.sampled} sampled articles found · ${when}` : "";
+  return h("span", { class: "chip " + k, title }, h("span", { class: "dot" }), label);
 }
 
 // ---------------------------------------------------------------- shell
@@ -478,7 +484,7 @@ async function pageCatalog() {
     f.seen = seenSel.value; store.set("cat.seen", f.seen); render();
   } });
   const sort = h("select", { class: "input", onchange: () => { f.sort = sort.value; store.set("cat.sort", f.sort); render(); } },
-    [["title", "Title"], ["size-desc", "Size: largest"], ["size-asc", "Size: smallest"], ["added", "Recently added"], ["opened", "Recently opened"], ["status", "Status"],
+    [["title", "Title"], ["size-desc", "Size: largest"], ["size-asc", "Size: smallest"], ["added", "Recently added"], ["opened", "Recently opened"], ["health", "Health"], ["status", "Status"],
       ["launcher", "Launcher"], ["device", "Device"]]
       .map(([v, l]) => h("option", { value: v, selected: f.sort === v }, l)));
   const hide = h("input", { type: "checkbox", checked: f.hide, onchange: () => { f.hide = hide.checked; store.set("cat.hide", f.hide); render(); } });
@@ -500,10 +506,11 @@ async function pageCatalog() {
     return th;
   }
   const thead = h("thead", {}, h("tr", {}, h("th", { class: "cb" }, head), cth("Title", "title"), cth("Size", "size", "right"),
-    cth("Opened", "opened"), h("th", {}, "Health"), cth("Status", "status"), h("th", { class: "act" }, "")));
+    cth("Opened", "opened"), cth("Health", "health"), cth("Status", "status"), h("th", { class: "act" }, "")));
   const table = h("div", { class: "tablewrap" }, h("table", { class: "t" }, thead, tbody));
   view.append(count, table, dock);
   api("/status").then((st) => {
+    if (st.needs_setup) data.no_provider = true;
     if (st.needs_setup) view.prepend(h("div", { class: "note warn", style: { marginBottom: "14px" } }, "No Usenet provider yet. ",
       h("a", { href: "#/setup/providers" }, "Add your provider"), " so shares can be opened and downloaded."));
   }).catch(() => {});
@@ -515,6 +522,16 @@ async function pageCatalog() {
   const done = (e) => active(e) || complete(e);
   const launchers = (e) => e.launchers || [], devices = (e) => e.devices || [];
   const opened = (e) => !!(e.opened_at || e.cached);
+  // Health, best first: checked available, link found, partial, check failed, not checked, gone
+  const HEALTH_RANK = { available: 6, link_ok: 5, partial: 4, error: 3, empty: 3, missing: 1, gone: 0 };
+  const healthRank = (e) => (e.health && e.health.verdict in HEALTH_RANK ? HEALTH_RANK[e.health.verdict] : 2);
+  async function checkLinks(ids) {
+    try {
+      const r = await api("/catalog/check", { body: { ids } });
+      toast(r.queued ? `Checking ${r.queued} link${r.queued === 1 ? "" : "s"} at your provider…` : "Those links are being checked already");
+      load();
+    } catch (e) { fail(e); }
+  }
   const seenOk = (e) => !f.seen || (f.seen === "opened" ? opened(e) : f.seen === "cached" ? e.cached : !opened(e));
   function tagOk(tags, want) {
     if (!want) return true;
@@ -534,6 +551,7 @@ async function pageCatalog() {
     const by = { "size-desc": (a, b) => size(b) - size(a), "size-asc": (a, b) => size(a) - size(b), added: (a, b) => (b.added || 0) - (a.added || 0),
       status: (a, b) => rank(b) - rank(a), title,
       launcher: (a, b) => firstL(a).localeCompare(firstL(b)) || title(a, b), device: (a, b) => firstD(a) - firstD(b) || title(a, b),
+      health: (a, b) => healthRank(b) - healthRank(a) || title(a, b),
       // last opened first; cached but never opened to browse (a download's index) next; never opened last
       opened: (a, b) => (b.opened_at || (b.cached ? 1 : 0)) - (a.opened_at || (a.cached ? 1 : 0)) || title(a, b) }[f.sort] || title;
     return out.sort(by);
@@ -599,6 +617,17 @@ async function pageCatalog() {
     return h("span", { class: "faint" }, "—");
   }
 
+  // the link check: how far it is, or an offer to check the entries nothing is known about
+  function linkLine() {
+    const lc = data.link_check;
+    if (lc) return h("span", {}, h("span", { class: "spin" }), ` checking links ${lc.done} of ${lc.total}`);
+    const gone = data.entries.filter((e) => e.health && e.health.verdict === "gone").length;
+    const unchecked = data.entries.filter((e) => !e.health || !e.health.verdict);
+    return [gone ? h("span", { class: "bad-text", title: "Their manifest is gone from your providers: they can't be opened" }, `${gone} gone`) : null,
+      unchecked.length && !data.no_provider ? h("a", { href: "#", title: "Ask your provider whether each link's share is still there: one small request per link",
+        onclick: (ev) => { ev.preventDefault(); checkLinks(unchecked.map((e) => e.id)); } }, `check ${unchecked.length} unchecked link${unchecked.length === 1 ? "" : "s"}`) : null];
+  }
+
   function render() {
     const total = data.entries.length;
     lsel.classList.toggle("on", !!f.launcher); dsel.classList.toggle("on", !!f.device); seenSel.classList.toggle("on", !!f.seen);   // a filter is narrowing the list
@@ -634,7 +663,8 @@ async function pageCatalog() {
     put(count, total ? [h("span", {}, `${vis.length} of ${total} entries`),
       h("span", {}, `${data.entries.filter(complete).length} downloaded`), partial ? h("span", {}, `${partial} in part`) : null,
       h("span", {}, `${data.entries.filter((e) => e.health && e.health.verdict === "available").length} checked available`),
-      h("span", {}, `${data.entries.filter(opened).length} opened · ${data.entries.filter((e) => e.cached).length} cached`)] : null);
+      h("span", {}, `${data.entries.filter(opened).length} opened · ${data.entries.filter((e) => e.cached).length} cached`),
+      linkLine()] : null);
     dock.classList.toggle("hidden", !selected.length);
     importBtn.classList.toggle("primary", !selected.length);   // one main action at a time
     if (selected.length) {
@@ -648,6 +678,7 @@ async function pageCatalog() {
           if (!(await confirmBox("Remove from catalog", `Remove ${selected.length} entr${selected.length === 1 ? "y" : "ies"} from the catalog? Downloads are not touched.`, "Remove", "danger solid"))) return;
           await api("/catalog/remove", { body: { ids: [...sel] } }).catch(fail); sel.clear(); load();
         } }, icon("trash"), "Remove"),
+        h("button", { class: "btn", title: "Ask your provider whether each selected share is still there (one small request per link)", onclick: () => checkLinks([...sel]) }, icon("pulse"), "Check links"),
         h("button", { class: "btn primary", onclick: () => downloadEntries(selected, () => { sel.clear(); load(); }).catch(fail) }, icon("download"), "Download selected…"));
     }
     if (!total) {
@@ -657,7 +688,7 @@ async function pageCatalog() {
   }
 
   async function load() {
-    data = await api("/catalog");
+    data = Object.assign(await api("/catalog"), { no_provider: data.no_provider });
     src.replaceChildren(h("option", { value: "" }, "All sources"), ...data.sources.map((s) => h("option", { value: s, selected: f.source === s }, s)));
     fillTagMenus();
     const n = (pred) => data.entries.filter(pred).length;
@@ -943,7 +974,7 @@ async function renderShare(s, path) {
       h("span", {}, `${(info.files || 0).toLocaleString()} files`), avail, h("span", { class: "grow" }),
       h("button", { class: "btn sm ghost", "aria-expanded": detailsOpen ? "true" : "false", onclick: () => { detailsOpen = !detailsOpen; store.set("sharedetails", detailsOpen); renderSummary(); } }, icon("info"), detailsOpen ? "Hide details" : "Details")),
     detailsOpen ? h("div", { class: "cards" },
-      fact("Format", `v${info.version ?? "?"} · ${info.access || "?"}`, info.created_at ? `published ${new Date(info.created_at).toLocaleDateString()}` : info.format || ""),
+      fact("Format", `v${info.version ?? "?"} · ${info.access || "?"}`, info.created_at ? `published ${new Date(info.created_at).toLocaleDateString()}` : ""),
       fact("Small files", (info.packed || 0).toLocaleString(), "packed several to an article"),
       h("div", { class: "card" }, h("div", { class: "k" }, "Uploader"), h("div", { class: "v mono", title: info.owner_fingerprint || "" }, fp || "—"), h("div", { class: "s" }, info.signature || "")),
       h("div", { class: "card wide" }, h("div", { class: "k" }, "Availability"), h("div", { class: "v" }, avail),
@@ -954,13 +985,20 @@ async function renderShare(s, path) {
           h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); runCheck(512); } }, "Check more thoroughly")))) : null);
   }
 
+  // sample 0: watch a check already running (opening the share starts one), without a toast
   async function runCheck(sample) {
-    try { s = await api(`/shares/${sid}/check`, { body: { sample } }); renderSummary(); }
-    catch (e) { fail(e); return; }
+    if (sample) {
+      try { s = await api(`/shares/${sid}/check`, { body: { sample } }); renderSummary(); }
+      catch (e) { fail(e); return; }
+    }
     const t = setInterval(async () => {
       try { s = await api("/shares/" + sid); } catch { clearInterval(t); return; }
       renderSummary();
-      if (!s.checking) { clearInterval(t); const v = (s.check || {}).verdict; toast(`Availability: ${(VERDICT[v] || ["", v])[1]}`, v === "available" ? "ok" : v === "partial" ? "" : "bad"); }
+      if (!s.checking) {
+        clearInterval(t);
+        const v = (s.check || {}).verdict;
+        if (sample || v !== "available") toast(`Availability: ${(VERDICT[v] || ["", v])[1]}`, v === "available" ? "ok" : v === "partial" ? "" : "bad");
+      }
     }, 1200);
     page.stop.push(() => clearInterval(t));
   }
@@ -1611,7 +1649,7 @@ async function pageSetup(parts) {
 
   // done
   put(card, h("div", { class: "body" }, h("h2", {}, "All set: now add some shares"),
-    h("p", { class: "muted" }, "usnfetch doesn't come with any shares. It opens the share links you already have, the same way the official app does:"),
+    h("p", { class: "muted" }, "usnfetch doesn't come with any shares. It opens the usn:// share links you already have:"),
     addSharesHelp(false),
     h("p", { class: "muted small" }, "Providers, folders and everything else can be changed later in Settings."),
     foot(h("span", { class: "grow" }), h("button", { class: "btn", onclick: () => { location.hash = "#/catalog"; } }, "Go to the catalog"))));

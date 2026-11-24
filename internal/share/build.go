@@ -547,6 +547,27 @@ func LoadShare(linkStr string, o LoadOpts) (*Index, error) {
 	return nil, nntp.ErrMissing
 }
 
+// describeManifest: the share's details in plain words for the log ("file list v5, public:
+// no password needed"); the format's own name only when it is not one usnfetch knows.
+func describeManifest(m Manifest) string {
+	d := "file list v" + m.Str("version")
+	switch f := m.Str("format"); f {
+	case "", "core_index", "share_v4_manifest":
+	default:
+		d += " (format " + f + ")"
+	}
+	switch acc := m.AccessMode(); acc {
+	case "public":
+		d += ", public: no password needed"
+	case "password":
+		d += ", password protected"
+	case "":
+	default:
+		d += ", access " + acc
+	}
+	return d
+}
+
 func loadVia(link *Link, a *nntp.Account, o LoadOpts, logf func(string, ...any)) (*Index, error) {
 	dial := func() (*nntp.Conn, error) { return nntp.Dial(a, 60*time.Second) }
 	conn, err := dial()
@@ -562,7 +583,7 @@ func loadVia(link *Link, a *nntp.Account, o LoadOpts, logf func(string, ...any))
 	if err != nil {
 		return nil, err
 	}
-	logf("manifest: format=%s version=%s access=%s", m.Str("format"), m.Str("version"), m.AccessMode())
+	logf("share: %s", describeManifest(m))
 	if err := checkOwnerPin(m, link); err != nil {
 		return nil, err
 	}

@@ -68,6 +68,13 @@ is still on disk, so it opens in seconds; after a few days unused that's cleared
 the column just says when you last opened it. Sort by it, or show only the shares you've opened,
 the cached ones, or the ones you haven't opened yet.
 
+The Health column says whether a share is still on your provider. Right after an import, usnfetch
+asks your provider about each new link, one small request apiece, so dead links show up as
+"Gone" straight away and the rest as "Link OK". Opening a share goes further and checks a sample
+of its actual files, which turns Health into "Available", "Partial" or "Missing". For links that
+were in the catalog before, tick them and press Check links, or use the "check … unchecked links"
+shortcut above the list.
+
 ## What it's like to use
 
 Open a share and you get its folders and files, with search, sorting by name or size, and for game

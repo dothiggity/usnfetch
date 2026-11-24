@@ -59,6 +59,7 @@ type Server struct {
 	pool      *engine.Pool
 	sem       chan struct{}
 	mux       *http.ServeMux
+	lc        linkChecks // link checks of catalog entries
 }
 
 type session struct {
@@ -269,6 +270,60 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ---- share sessions ----
 
+// startCheck STATs a sample of the share's articles at every account in the background (one
+// check at a time per share) and keeps the result with the share's details.
+func (s *Server) startCheck(ss *session, ix *share.Index, sample int) {
+	ss.mu.Lock()
+	start := !ss.Checking
+	ss.Checking = true
+	ss.mu.Unlock()
+	if start {
+		go s.runCheck(ss, ix, sample)
+	}
+}
+
+// runCheck is startCheck's work; the caller has set ss.Checking.
+func (s *Server) runCheck(ss *session, ix *share.Index, sample int) {
+	var res any
+	accts, err := s.M.Accounts()
+	if err == nil {
+		var a *engine.Availability
+		if a, err = engine.CheckAvailability(ix, accts, sample, 8); err == nil {
+			res = a
+		}
+	}
+	if err != nil {
+		res = map[string]any{"verdict": "error", "error": err.Error(), "checked_at": float64(time.Now().UnixNano()) / 1e9, "accounts": []any{}}
+	}
+	if info := s.M.Store.ShareInfo(ss.Link); info != nil {
+		b, _ := json.Marshal(res)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		// a check that could not run (no connection free, say) keeps an earlier real result
+		// as the share's Health; the share page still shows what just happened
+		if old, _ := info["check"].(map[string]any); m["verdict"] != "error" || old == nil || old["verdict"] == "error" {
+			info["check"] = m
+			_ = s.M.Store.SetShareInfo(ss.Link, info)
+		}
+	}
+	ss.mu.Lock()
+	ss.Check, ss.Checking = res, false
+	ss.mu.Unlock()
+}
+
+// autoCheckAge: opening a share checks its availability when the last check is older.
+const autoCheckAge = 7 * 24 * time.Hour
+
+// needsCheck: no availability check yet, a failed one, or one older than autoCheckAge.
+func needsCheck(info map[string]any) bool {
+	ck, _ := info["check"].(map[string]any)
+	if ck == nil || ck["verdict"] == "error" {
+		return true
+	}
+	at, _ := ck["checked_at"].(float64)
+	return time.Since(time.Unix(int64(at), 0)) > autoCheckAge
+}
+
 func (s *Server) openShare(link, title, password string) (*session, error) {
 	link = strings.TrimSpace(link)
 	if _, err := share.ParseLink(link); err != nil {
@@ -353,13 +408,29 @@ func (s *Server) loadShare(ss *session, password string) {
 		info[k] = ix.Info[k]
 	}
 	_ = s.M.Store.SetShareInfo(ss.Link, info)
+	// a share without a recent availability check gets one now, so the catalog's Health fills
+	// in for every share you open (marked as checking in the same step it becomes ready)
+	autoCheck := false
+	if needsCheck(info) {
+		if _, err := s.M.Accounts(); err == nil {
+			autoCheck = true
+		}
+	}
 	ss.mu.Lock()
 	ss.Index, ss.Check, ss.State = ix, info["check"], "ready"
+	if autoCheck {
+		autoCheck = !ss.Checking
+		ss.Checking = true
+	}
 	if ss.Title == "" {
 		ss.Title = name
 	}
 	ss.mu.Unlock()
 	ss.log(fmt.Sprintf("ready: %s files, %.2f GB", commas(sum.Files), float64(sum.Size)/1e9))
+	if autoCheck {
+		ss.log("checking availability: a sample of its articles")
+		go s.runCheck(ss, ix, 64)
+	}
 	app.ReleaseMemory() // building the index and its folder tree can peak at GBs: give it back now
 }
 
@@ -584,6 +655,18 @@ func (s *Server) routes() {
 		}
 		if !preview {
 			s.M.Log(fmt.Sprintf("catalog import %s: %d link(s), %d new, %d filled in, %d changed, %d left as they were", name, len(entries), res.Added, res.Filled, res.Changed, res.Kept))
+			// the imported links nothing is known about get the light link check, so Health
+			// fills in without opening each share (needs a provider)
+			if _, err := s.M.Accounts(); err == nil {
+				infos := s.M.Store.AllShareInfo()
+				var unchecked []string
+				for _, e := range entries {
+					if healthOf(infos[e.Link]) == nil {
+						unchecked = append(unchecked, e.Link)
+					}
+				}
+				s.queueLinkCheck(unchecked)
+			}
 		}
 		return map[string]any{"found": len(entries), "added": res.Added, "updated": res.Filled + res.Changed, "filled": res.Filled,
 			"changed": res.Changed, "kept": res.Kept, "changes": res.Changes, "preview": preview,
@@ -603,6 +686,7 @@ func (s *Server) routes() {
 		return map[string]any{"removed": len(links)}, s.Cat.Remove(links)
 	})
 	s.planRoutes()
+	s.linkCheckRoutes()
 
 	// shares
 	s.api("POST /api/shares/open", func(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -690,36 +774,7 @@ func (s *Server) routes() {
 		if err != nil {
 			return nil, err
 		}
-		sample := min(4096, max(8, num(body(r)["sample"], 64)))
-		ss.mu.Lock()
-		start := !ss.Checking
-		ss.Checking = true
-		ss.mu.Unlock()
-		if start {
-			go func() {
-				var res any
-				accts, err := s.M.Accounts()
-				if err == nil {
-					var a *engine.Availability
-					if a, err = engine.CheckAvailability(ix, accts, sample, 8); err == nil {
-						res = a
-					}
-				}
-				if err != nil {
-					res = map[string]any{"verdict": "error", "error": err.Error(), "checked_at": float64(time.Now().UnixNano()) / 1e9, "accounts": []any{}}
-				}
-				if info := s.M.Store.ShareInfo(ss.Link); info != nil {
-					b, _ := json.Marshal(res)
-					var m any
-					_ = json.Unmarshal(b, &m)
-					info["check"] = m
-					_ = s.M.Store.SetShareInfo(ss.Link, info)
-				}
-				ss.mu.Lock()
-				ss.Check, ss.Checking = res, false
-				ss.mu.Unlock()
-			}()
-		}
+		s.startCheck(ss, ix, min(4096, max(8, num(body(r)["sample"], 64))))
 		return s.shareJSON(ss), nil
 	})
 	s.api("POST /api/shares/{sid}/download", s.shareDownload)
@@ -993,9 +1048,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 			if info["size"] != nil {
 				sh = map[string]any{"name": info["name"], "size": info["size"], "files": info["files"], "packed": info["packed"], "format": info["format"], "access": info["access"]}
 			}
-			if ck, ok := info["check"].(map[string]any); ok {
-				health = map[string]any{"verdict": ck["verdict"], "sampled": ck["sampled"], "available": ck["available"], "checked_at": ck["checked_at"]}
-			}
+			health = healthOf(info)
 		}
 		openedAt := infos[e.Link]["opened_at"] // when it was last opened to browse (nil: never)
 		isCached := false                      // its index is on disk, so it opens in seconds
@@ -1038,7 +1091,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 		def = "Default"
 	}
 	return map[string]any{"entries": out, "sources": srcs, "categories": s.M.Settings.Categories, "default_category": def,
-		"tags": map[string]any{"launchers": tl, "devices": td, "groups": catalog.DeviceGroups}}, nil
+		"tags": map[string]any{"launchers": tl, "devices": td, "groups": catalog.DeviceGroups}, "link_check": s.linkCheckState()}, nil
 }
 
 // cachedFolders: the share folders whose index is in the cache folder now. Index files are
