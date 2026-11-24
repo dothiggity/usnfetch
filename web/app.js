@@ -406,27 +406,37 @@ async function reviewShares(src, done) {
   const plan = src.ids ? await api("/catalog/plan", { body: { ids: src.ids } }) : await api("/jobs/plan", { body: { text: src.links.join("\n") } });
   const items = plan.items;
   if (!items.length) { toast("Nothing to queue"); return; }
+  // gone: the share's manifest is at none of your providers (checked just now), so its download
+  // would fail; those are left out
+  const ok = items.filter((it) => !it.gone), goneN = items.length - ok.length;
+  const size = ok.reduce((a, it) => a + (it.size || 0), 0), unknown = ok.filter((it) => it.size == null).length;
   let mode = plan.extract_default, existing = "skip";
   const cat = h("select", { class: "input" }, plan.categories.map((c) => h("option", { value: c, selected: c === plan.category }, c)));
   const list = h("div", { class: "rv-list" });
   const showList = () => put(list, items.map((it) => h("div", { class: "rv-item" },
-    h("div", { class: "rv-t" }, h("b", {}, it.title), it.active_jobs && it.active_jobs.length ? h("span", { class: "chip info" }, "already " + it.active_jobs[0].state) : null,
+    h("div", { class: "rv-t" }, h("b", {}, it.title),
+      it.gone ? h("span", { class: "chip bad", title: "The share's manifest isn't at any of your providers any more, so it can't be downloaded. Left out." }, "gone from your provider") : null,
+      it.active_jobs && it.active_jobs.length ? h("span", { class: "chip info" }, "already " + it.active_jobs[0].state) : null,
       it.folder_exists ? h("span", { class: "chip warn", title: it.out_dir }, "folder already there") : null),
     h("div", { class: "rv-s muted small" }, it.size != null ? (it.size_listed ? `listed as ${fmtBytes(it.size)}` : fmtBytes(it.size)) : "size known once it starts",
       " · ", h("span", { class: "mono" }, [plan.complete_dir, safeSeg(cat.value), it.name_known ? safeSeg(it.name) : "<the share's folder name>"].join(plan.sep))))));
   cat.onchange = showList; showList();
-  const over = plan.free != null && plan.size > plan.free;
+  const over = plan.free != null && size > plan.free;
   const anyThere = items.some((it) => it.folder_exists);
   const choice = (name, cur, opts, set) => h("div", { class: "choices" }, opts.map(([v, label, help]) => h("label", { class: "choice" },
     h("input", { type: "radio", name, value: v, checked: v === cur, onchange: () => set(v) }),
     h("div", {}, h("div", { class: "cl" }, label, name === "xmode" && v === plan.extract_default ? h("span", { class: "chip plain" }, "default") : null), h("div", { class: "ch" }, help)))));
   modal({ title: items.length === 1 ? "Download " + items[0].title : `Download ${items.length} shares`, wide: true, body: [
+    goneN ? h("div", { class: "note bad" }, goneN === items.length
+      ? (items.length === 1 ? "This share is gone from your provider (its manifest isn't there any more), so it can't be downloaded."
+        : "All of these shares are gone from your provider (their manifests aren't there any more), so none can be downloaded.")
+      : `${goneN} of these ${goneN === 1 ? "share is" : "shares are"} gone from your provider (the manifest isn't there any more) and will be left out.`) : null,
     h("div", { class: "facts" },
-      h("div", {}, h("div", { class: "k" }, "Shares"), h("div", { class: "v" }, items.length.toLocaleString())),
-      h("div", {}, h("div", { class: "k" }, "Size"), h("div", { class: "v" }, fmtBytes(plan.size) + (plan.unknown ? " +" : "")),
-        plan.unknown ? h("div", { class: "faint small" }, `${plan.unknown} not opened yet: their size shows once they start`) : null),
+      h("div", {}, h("div", { class: "k" }, "Shares"), h("div", { class: "v" }, ok.length.toLocaleString())),
+      h("div", {}, h("div", { class: "k" }, "Size"), h("div", { class: "v" }, fmtBytes(size) + (unknown ? " +" : "")),
+        unknown ? h("div", { class: "faint small" }, `${unknown} not opened yet: their size shows once they start`) : null),
       h("div", {}, h("div", { class: "k" }, "Free space"), h("div", { class: "v" + (over ? " bad" : "") }, plan.free != null ? fmtBytes(plan.free) : "—"))),
-    over ? h("div", { class: "note bad" }, `Not enough space: ${fmtBytes(plan.size - plan.free)} more is needed in ${plan.complete_dir}. A job fails when it starts unless space is freed first.`) : null,
+    over ? h("div", { class: "note bad" }, `Not enough space: ${fmtBytes(size - plan.free)} more is needed in ${plan.complete_dir}. A job fails when it starts unless space is freed first.`) : null,
     h("div", { class: "form tight" }, h("label", { class: "k" }, "Category"), cat),
     h("div", {}, h("div", { class: "k2" }, "Files go to"), list),
     h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · counted when each download starts")),
@@ -437,9 +447,9 @@ async function reviewShares(src, done) {
       choice("xexist", existing, [["skip", "Skip them", "A file with the same name and size counts as done."],
         ["verify", "Check them first", "Compare each one's SHA-256 with the share and download only what differs."],
         ["redownload", "Download everything again", "Overwrite what is there."]], (v) => { existing = v; })) : null,
-  ], actions: [{ label: "Cancel" }, { label: over ? "Queue anyway" : items.length === 1 ? "Queue download" : `Queue ${items.length} downloads`, kind: "primary", run: async () => {
+  ], actions: !ok.length ? [{ label: "Close" }] : [{ label: "Cancel" }, { label: over ? "Queue anyway" : ok.length === 1 ? "Queue download" : `Queue ${ok.length} downloads`, kind: "primary", run: async () => {
     const body = { category: cat.value, extract: mode, existing };
-    const r = src.ids ? await api("/catalog/download", { body: { ...body, ids: src.ids } }) : await api("/jobs", { body: { ...body, text: src.links.join("\n") } });
+    const r = src.ids ? await api("/catalog/download", { body: { ...body, ids: ok.map((it) => it.id) } }) : await api("/jobs", { body: { ...body, text: ok.map((it) => it.link).join("\n") } });
     toast(`Queued ${r.jobs.length} download${r.jobs.length === 1 ? "" : "s"}` + (r.errors.length ? ` · ${r.errors.length} not queued: ${r.errors[0]}` : ""), r.errors.length ? "" : "ok",
       { label: "View in Activity", href: "#/activity" });
     if (done) done(r);
@@ -1846,6 +1856,7 @@ async function pageSystem() {
     try {
       const st = await api("/status");
       const mem = await api("/debug/memory").catch(() => null);
+      const ic = await api("/system/index-cache").catch(() => null);
       restartBtn.classList.toggle("hidden", !st.can_restart);
       put(cards,
         h("div", { class: "card" }, h("div", { class: "k" }, "Version"), h("div", { class: "v" }, st.version), h("div", { class: "s" }, st.runtime || ("Python " + st.python)),
@@ -1855,6 +1866,9 @@ async function pageSystem() {
         h("div", { class: "card", title: "Go: usnfetch's own data. SQLite & other: the share indexes' working memory and the rest." },
           h("div", { class: "k" }, "Memory"), h("div", { class: "v" }, mem && mem.private ? fmtBytes(mem.private) : "—"),
           h("div", { class: "s" }, mem && mem.private ? `Go ${fmtBytes(mem.go_heap_in_use)} · SQLite & other ${fmtBytes(mem.other || 0)}` : "")),
+        ic ? h("div", { class: "card", title: ic.path + (ic.compresses ? "\nIndexes nothing has open are compressed (Windows file compression); they read as before." : "") },
+          h("div", { class: "k" }, "Share index cache"), h("div", { class: "v" }, fmtBytes(ic.on_disk)),
+          h("div", { class: "s" }, `${ic.files} share${ic.files === 1 ? "" : "s"}` + (ic.on_disk < ic.size * 0.95 ? ` · ${fmtBytes(ic.size)} before compression` : ""))) : null,
         h("div", { class: "card wide" }, h("div", { class: "k" }, "Accounts"), h("div", { class: "v", style: { fontSize: "14px", whiteSpace: "normal" } }, st.accounts || "none configured"), h("div", { class: "s", title: st.data_dir }, "data: " + st.data_dir)));
       const l = await api("/logs?after=" + seq);
       if (l.lines.length) {

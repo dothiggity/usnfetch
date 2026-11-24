@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"usnfetch/internal/app"
 	"usnfetch/internal/catalog"
@@ -122,7 +123,9 @@ func (s *Server) planShares(links []string, category string) map[string]any {
 	}
 	items := []map[string]any{}
 	var total int64
-	unknown := 0
+	unknown, gone := 0, 0
+	// is each share still at the provider? (a few seconds at most; skipped without an answer)
+	checked := s.linkCheckNow(links, 8*time.Second)
 	for _, l := range links {
 		f := s.factsFor(l)
 		name := f.Name
@@ -135,7 +138,11 @@ func (s *Server) planShares(links []string, category string) map[string]any {
 		_, err := os.Stat(out)
 		it := map[string]any{"link": l, "id": f.ID, "title": f.Title, "name": name, "name_known": f.Name != "", "size": nil,
 			"size_listed": f.SizeListed, "files": f.Files, "in_catalog": f.InCatalog, "out_dir": out, "folder_exists": err == nil,
-			"active_jobs": active[l]}
+			"active_jobs": active[l], "gone": false}
+		if r, ok := checked[l]; ok && r.Err == nil && !r.Found {
+			it["gone"] = true // its manifest is at none of the providers: a download would fail
+			gone++
+		}
 		if f.Size > 0 {
 			it["size"] = f.Size
 			total += f.Size
@@ -148,7 +155,7 @@ func (s *Server) planShares(links []string, category string) map[string]any {
 	if n, err := app.DiskFree(st.CompleteDir); err == nil {
 		free = n
 	}
-	return map[string]any{"items": items, "size": total, "unknown": unknown, "free": free, "complete_dir": st.CompleteDir,
+	return map[string]any{"items": items, "size": total, "unknown": unknown, "gone": gone, "free": free, "complete_dir": st.CompleteDir,
 		"sep": string(os.PathSeparator), "category": category, "categories": st.Categories,
 		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives}
 }

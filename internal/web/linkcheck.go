@@ -57,6 +57,77 @@ func (s *Server) linkCheckState() any {
 	return map[string]int{"done": s.lc.done, "total": s.lc.total}
 }
 
+// checkUncheckedLinks queues the link check for every catalog entry with no Health yet: at
+// startup and when a provider is added, so a list imported before there was a provider (or
+// before this check existed) fills in by itself.
+func (s *Server) checkUncheckedLinks() {
+	if _, err := s.M.Accounts(); err != nil {
+		return
+	}
+	infos := s.M.Store.AllShareInfo()
+	var links []string
+	for _, e := range s.Cat.Snapshot() {
+		if healthOf(infos[e.Link]) == nil {
+			links = append(links, e.Link)
+		}
+	}
+	if len(links) > 0 {
+		s.queueLinkCheck(links)
+	}
+}
+
+// linkCheckNow checks links right away for a download review (up to 500): their results,
+// or nil when there is no provider or no answer within wait. The results are kept with each
+// share's details either way, even when they arrive after wait.
+func (s *Server) linkCheckNow(links []string, wait time.Duration) map[string]engine.LinkResult {
+	accts, err := s.M.Accounts()
+	if err != nil || len(links) == 0 || len(links) > 500 {
+		return nil
+	}
+	manifests := map[string][]string{}
+	for _, l := range links {
+		if pl, err := share.ParseLink(l); err == nil && len(pl.ManifestMsgids) > 0 {
+			manifests[l] = pl.ManifestMsgids
+		}
+	}
+	done := make(chan map[string]engine.LinkResult, 1)
+	go func() {
+		res := engine.CheckLinks(manifests, accts, 4, nil)
+		s.keepLinkResults(res)
+		done <- res
+	}()
+	select {
+	case res := <-done:
+		return res
+	case <-time.After(wait):
+		return nil
+	}
+}
+
+// keepLinkResults stores link check results with the shares' details; returns how many
+// were found, gone, and could not be checked.
+func (s *Server) keepLinkResults(res map[string]engine.LinkResult) (found, gone, unknown int) {
+	now := float64(time.Now().UnixNano()) / 1e9
+	for l, r := range res {
+		if r.Err != nil {
+			unknown++
+			continue
+		}
+		if r.Found {
+			found++
+		} else {
+			gone++
+		}
+		info := s.M.Store.ShareInfo(l)
+		if info == nil {
+			info = map[string]any{}
+		}
+		info["link_check"] = map[string]any{"found": r.Found, "checked_at": now}
+		_ = s.M.Store.SetShareInfo(l, info)
+	}
+	return found, gone, unknown
+}
+
 func (s *Server) runLinkChecks() {
 	for {
 		s.lc.mu.Lock()
@@ -85,25 +156,7 @@ func (s *Server) runLinkChecks() {
 				s.lc.done = base + d
 				s.lc.mu.Unlock()
 			})
-			now := float64(time.Now().UnixNano()) / 1e9
-			found, gone, unknown := 0, 0, 0
-			for l, r := range res {
-				if r.Err != nil {
-					unknown++
-					continue
-				}
-				if r.Found {
-					found++
-				} else {
-					gone++
-				}
-				info := s.M.Store.ShareInfo(l)
-				if info == nil {
-					info = map[string]any{}
-				}
-				info["link_check"] = map[string]any{"found": r.Found, "checked_at": now}
-				_ = s.M.Store.SetShareInfo(l, info)
-			}
+			found, gone, unknown := s.keepLinkResults(res)
 			msg := fmt.Sprintf("link check: %d of %d share link(s) found at your providers", found, len(res))
 			if gone > 0 {
 				msg += fmt.Sprintf(", %d gone (their manifest is missing everywhere)", gone)

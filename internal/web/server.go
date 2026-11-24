@@ -95,6 +95,10 @@ func New(version string, m *app.Manager, cat *app.Catalog, static fs.FS, devDir 
 	}
 	s.routes()
 	go s.janitor()
+	go func() { // links nothing is known about yet get the link check, a moment after startup
+		time.Sleep(10 * time.Second)
+		s.checkUncheckedLinks()
+	}()
 	return s
 }
 
@@ -475,6 +479,7 @@ func (s *Server) closeSession(ss *session) { // s.smu held
 		s.M.UnpinIndex(ix.Path)
 		ix.Close()
 		app.ReleaseMemory()
+		s.M.CompressIdleIndexes() // its index is idle now: compress it (Windows)
 	}
 }
 
@@ -604,6 +609,7 @@ func (s *Server) routes() {
 	s.api("GET /api/debug/memory", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		return s.memoryReport(), nil
 	})
+	s.api("GET /api/system/index-cache", func(w http.ResponseWriter, r *http.Request) (any, error) { return s.M.IndexCacheStats(), nil })
 	s.api("POST /api/debug/memory/release", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		debug.FreeOSMemory() // what is left after this is in use, not garbage waiting to go
 		return s.memoryReport(), nil
@@ -865,6 +871,9 @@ func (s *Server) routes() {
 		}
 		if err := s.M.SaveSettings(); err != nil {
 			return nil, err
+		}
+		if added > 0 {
+			s.checkUncheckedLinks()
 		}
 		return map[string]any{"found": len(found), "added": added, "settings": s.settingsView()}, nil
 	})
@@ -1561,5 +1570,8 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 		return nil, err
 	}
 	s.M.Kick()
+	if _, ok := b["accounts"]; ok {
+		s.checkUncheckedLinks() // a provider was added: the catalog's links can be checked now
+	}
 	return s.settingsView(), nil
 }

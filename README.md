@@ -71,9 +71,10 @@ the cached ones, or the ones you haven't opened yet.
 The Health column says whether a share is still on your provider. Right after an import, usnfetch
 asks your provider about each new link, one small request apiece, so dead links show up as
 "Gone" straight away and the rest as "Link OK". Opening a share goes further and checks a sample
-of its actual files, which turns Health into "Available", "Partial" or "Missing". For links that
-were in the catalog before, tick them and press Check links, or use the "check … unchecked links"
-shortcut above the list.
+of its actual files, which turns Health into "Available", "Partial" or "Missing". Links you
+imported before adding a provider get checked as soon as you add one, and you can check any again
+by ticking them and pressing Check links. Pasted links get the same check in the download review,
+which points out any that are gone and leaves them out.
 
 ## What it's like to use
 
@@ -131,7 +132,9 @@ If you'd rather keep everything next to the program, say on a USB stick, create 
 called `portable` in the same folder as `usnfetch.exe`.
 
 The share index cache takes roughly 200 MB per TB of share, and old entries are cleaned up on their
-own.
+own. On Windows, indexes that aren't in use are compressed with Windows' own file compression,
+which roughly halves them and doesn't slow browsing down. The System page shows how much space the
+cache takes.
 Provider passwords are encrypted with Windows' own data protection, so only your Windows account can
 read them.
 

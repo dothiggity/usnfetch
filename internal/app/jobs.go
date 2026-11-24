@@ -282,6 +282,7 @@ type Manager struct {
 	kick         chan struct{}
 	paused       atomic.Bool
 	throttle     atomic.Pointer[Throttle]
+	compress     compressRun // compressing idle indexes in the cache (compress.go)
 }
 
 // NewManager opens the data folder (locking it), imports the previous version's files
@@ -322,6 +323,7 @@ func NewManager(dataDir string, start bool) (*Manager, error) {
 	if start {
 		go m.governor()
 		go m.scheduler()
+		m.CompressIdleIndexes()
 	}
 	return m, nil
 }
