@@ -73,9 +73,14 @@ the build's ROM folders, leaving out artwork, game lists and the extra tracks of
 Searching the catalog for a system finds the builds that have it, and on a build's page each
 system is a chip that opens its folder.
 
-**Search** looks inside every share you've opened at once. Type "Ocarina" or "scph1001" and you
-see which builds have it, where, and how big it is, with a click to that folder. Across 18 big
-shares it takes under a second.
+**Search** looks inside every share you've opened at once, game first. Type "mario 3" and you get
+one line per game and system: *Super Mario Bros. 3 · NES*, *Mario Party 3 · Nintendo 64*, *Super
+Mario 3D World · Switch*. Each line lists the builds that have it, and a click opens that build at
+the game's folder. Regions, discs and the many names one console goes by ("NES", "Nintendo
+Entertainment System") are folded together. Abbreviations and Roman numerals work too: "smb3",
+"sm64", "ff7", "zelda 2". Across about 180,000 games it answers in a few milliseconds. For
+anything that isn't a game, like "scph1001", it searches every file and folder instead, which
+takes under a second.
 
 The Opened column keeps track of what you've already looked at. "Cached" means the share's full
 index is on disk, so it opens in seconds and previews start right away. A share that only has its

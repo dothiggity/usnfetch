@@ -3,8 +3,10 @@ package share
 import (
 	"database/sql"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // What's inside a game build: its systems and how many games each has, read from the folder
@@ -26,6 +28,7 @@ var notGame = map[string]bool{
 	".url": true, ".lnk": true, ".pdf": true, ".db": true, ".log": true, ".srm": true, ".sav": true, ".state": true, ".keep": true,
 	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".bmp": true, ".webp": true, ".svg": true, ".ico": true,
 	".mp4": true, ".mkv": true, ".avi": true, ".webm": true, ".mov": true, ".mp3": true, ".ogg": true, ".wav": true, ".flac": true,
+	".pcm": true, // MSU-1 soundtracks (the game is its .sfc and .msu)
 }
 
 // mediaDir: subfolders of a system folder that hold artwork and the like, not games.
@@ -85,41 +88,147 @@ func looksLikeSystem(name string) bool {
 }
 
 // SystemName: a system folder's name for people.
+// One name per console however a build names its folder: an EmulationStation short name
+// ("megadrive", "genesis"), or a LaunchBox platform ("Sega Genesis"). Consoles sold under two
+// names are one system ("Mega Drive / Genesis"); a hack set stays apart ("… (Hacks)").
 func SystemName(folder string) string {
-	if n, ok := systemNames[strings.ToLower(folder)]; ok {
-		return n
+	base, tag := folder, ""
+	if i := strings.Index(folder, " ("); i > 0 && strings.HasSuffix(folder, ")") {
+		base, tag = folder[:i], " ("+strings.ToLower(folder[i+2:len(folder)-1])+")"
+	}
+	k := strings.ToLower(strings.TrimSpace(base))
+	if n, ok := sameSystem[k]; ok {
+		return n + tag
+	}
+	if n, ok := systemNames[k]; ok {
+		return n + tag
 	}
 	return folder
 }
 
-// countGames: the games among a system folder's files and subfolders.
-func countGames(files, dirs []string) int64 {
-	var m3u, sheets, rest int64
-	for _, f := range files {
-		ext := strings.ToLower(path.Ext(f))
-		switch {
-		case notGame[ext] || strings.EqualFold(f, "gamelist.xml"):
-		case ext == ".m3u":
-			m3u++
-		case ext == ".cue" || ext == ".gdi" || ext == ".ccd" || ext == ".toc":
-			sheets++
-		default:
-			rest++
+// sameSystem: names a console goes by in other builds, to one name (lower case keys).
+var sameSystem = map[string]string{
+	"nes": "NES", "famicom": "NES", "nintendo entertainment system": "NES", "nintendo famicom": "NES",
+	"snes": "SNES", "sfc": "SNES", "super nintendo entertainment system": "SNES", "super nintendo": "SNES", "nintendo super famicom": "SNES",
+	"genesis": "Mega Drive / Genesis", "megadrive": "Mega Drive / Genesis", "sega genesis": "Mega Drive / Genesis", "sega mega drive": "Mega Drive / Genesis",
+	"segacd": "Mega CD / Sega CD", "megacd": "Mega CD / Sega CD", "sega cd": "Mega CD / Sega CD", "sega mega-cd": "Mega CD / Sega CD",
+	"sms": "Master System", "mastersystem": "Master System", "sega master system": "Master System",
+	"gamegear": "Game Gear", "sega game gear": "Game Gear", "saturn": "Saturn", "sega saturn": "Saturn",
+	"dreamcast": "Dreamcast", "sega dreamcast": "Dreamcast", "sega32x": "32X", "sega 32x": "32X", "sg1000": "SG-1000", "sega sg-1000": "SG-1000",
+	"pcengine": "PC Engine / TurboGrafx-16", "tg16": "PC Engine / TurboGrafx-16", "nec turbografx-16": "PC Engine / TurboGrafx-16", "nec pc engine": "PC Engine / TurboGrafx-16",
+	"pcenginecd": "PC Engine CD / TurboGrafx-CD", "tg-cd": "PC Engine CD / TurboGrafx-CD", "nec turbografx-cd": "PC Engine CD / TurboGrafx-CD",
+	"psx": "PlayStation", "ps1": "PlayStation", "sony playstation": "PlayStation", "ps2": "PlayStation 2", "sony playstation 2": "PlayStation 2",
+	"ps3": "PlayStation 3", "sony playstation 3": "PlayStation 3", "psp": "PSP", "sony psp": "PSP", "psvita": "PS Vita", "sony playstation vita": "PS Vita",
+	"n64": "Nintendo 64", "nintendo 64": "Nintendo 64", "gc": "GameCube", "gamecube": "GameCube", "nintendo gamecube": "GameCube",
+	"wii": "Wii", "nintendo wii": "Wii", "wiiu": "Wii U", "nintendo wii u": "Wii U", "switch": "Switch", "nintendo switch": "Switch",
+	"nds": "Nintendo DS", "nintendo ds": "Nintendo DS", "3ds": "Nintendo 3DS", "nintendo 3ds": "Nintendo 3DS",
+	"gb": "Game Boy", "nintendo game boy": "Game Boy", "gbc": "Game Boy Color", "nintendo game boy color": "Game Boy Color",
+	"gba": "Game Boy Advance", "nintendo game boy advance": "Game Boy Advance", "virtualboy": "Virtual Boy", "nintendo virtual boy": "Virtual Boy",
+	"fds": "Famicom Disk System", "nintendo famicom disk system": "Famicom Disk System",
+	"neogeo": "Neo Geo", "snk neo geo aes": "Neo Geo", "snk neo geo mvs": "Neo Geo", "neogeocd": "Neo Geo CD", "snk neo geo cd": "Neo Geo CD",
+	"ngp": "Neo Geo Pocket", "snk neo geo pocket": "Neo Geo Pocket", "ngpc": "Neo Geo Pocket Color", "snk neo geo pocket color": "Neo Geo Pocket Color",
+	"msx": "MSX", "msx1": "MSX", "microsoft msx": "MSX", "msx2": "MSX2", "microsoft msx2": "MSX2",
+	"xbox": "Xbox", "microsoft xbox": "Xbox", "xbox360": "Xbox 360", "microsoft xbox 360": "Xbox 360",
+	"dos": "DOS", "pc": "DOS", "ms-dos": "DOS", "microsoft ms-dos": "DOS", "windows": "Windows", "microsoft windows": "Windows",
+	"c64": "Commodore 64", "commodore 64": "Commodore 64", "amiga": "Amiga", "commodore amiga": "Amiga", "amigacd32": "Amiga CD32", "commodore amiga cd32": "Amiga CD32",
+	"zxspectrum": "ZX Spectrum", "sinclair zx spectrum": "ZX Spectrum", "amstradcpc": "Amstrad CPC", "amstrad cpc": "Amstrad CPC",
+	"apple2": "Apple II", "apple ii": "Apple II", "3do": "3DO", "3do interactive multiplayer": "3DO", "panasonic 3do": "3DO",
+	"intellivision": "Intellivision", "mattel intellivision": "Intellivision", "coleco": "ColecoVision", "colecovision": "ColecoVision", "coleco colecovision": "ColecoVision",
+	"vectrex": "Vectrex", "gce vectrex": "Vectrex", "wonderswan": "WonderSwan", "wswan": "WonderSwan", "bandai wonderswan": "WonderSwan",
+	"wonderswancolor": "WonderSwan Color", "wswanc": "WonderSwan Color", "bandai wonderswan color": "WonderSwan Color",
+	"atari2600": "Atari 2600", "atari 2600": "Atari 2600", "atari5200": "Atari 5200", "atari 5200": "Atari 5200", "atari7800": "Atari 7800", "atari 7800": "Atari 7800",
+	"atarilynx": "Atari Lynx", "lynx": "Atari Lynx", "atari lynx": "Atari Lynx", "jaguar": "Atari Jaguar", "atari jaguar": "Atari Jaguar",
+	"atarist": "Atari ST", "atari st": "Atari ST", "atari800": "Atari 800", "atari 800": "Atari 800",
+	"pcfx": "PC-FX", "nec pc-fx": "PC-FX", "pc88": "PC-88", "nec pc-8801": "PC-88", "pc98": "PC-98", "nec pc-9801": "PC-98",
+	"x68000": "X68000", "sharp x68000": "X68000", "cdi": "CD-i", "philips cd-i": "CD-i", "arcade": "Arcade",
+}
+
+// Game is one game of a build: the files of one title in one system folder (its disc
+// tracks, discs, regions and revisions together).
+type Game struct {
+	Title  string `json:"t"` // as people know it: "Super Mario Bros. 3"
+	System string `json:"s"` // its system, for people
+	Folder string `json:"f"` // its system folder in the share
+	Name   string `json:"n"` // its first file (or folder)
+	Size   int64  `json:"z"` // all its files
+}
+
+var tagRE = regexp.MustCompile(`\s*[\(\[][^\)\]]*[\)\]]`)
+
+// GameTitle: a ROM file's (or game folder's) name as people know the game: without its file
+// type and the tags dump sets add ("(USA)", "(Rev 1)", "(Disc 2)", "(Track 3)", "[!]").
+func GameTitle(name string) string {
+	if ext := path.Ext(name); ext != "" && len(ext) <= 6 && !strings.ContainsAny(ext, " ()[]") {
+		name = strings.TrimSuffix(name, ext)
+	}
+	t := strings.Join(strings.Fields(tagRE.ReplaceAllString(name, "")), " ")
+	if t == "" {
+		return name
+	}
+	return t
+}
+
+// TitleKey: a title folded for comparing and searching: lower case, no accents, "&" as "and",
+// only letters and digits between single spaces.
+func TitleKey(t string) string {
+	t = strings.ToLower(strings.ReplaceAll(t, "&", " and "))
+	var b strings.Builder
+	space := true
+	for _, r := range t {
+		if f, ok := unaccent[r]; ok {
+			r = f
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			space = false
+		} else if r != '\'' && r != '’' && !space { // "Mario's" stays one word
+			b.WriteByte(' ')
+			space = true
 		}
 	}
-	n := rest
-	switch { // a disc game is its playlist or cue sheet, not every track and disc image
-	case m3u > 0:
-		n = m3u
-	case sheets > 0:
-		n = sheets
+	return strings.TrimSpace(b.String())
+}
+
+var unaccent = map[rune]rune{'á': 'a', 'à': 'a', 'â': 'a', 'ä': 'a', 'ã': 'a', 'å': 'a', 'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+	'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i', 'ó': 'o', 'ò': 'o', 'ô': 'o', 'ö': 'o', 'õ': 'o', 'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+	'ñ': 'n', 'ç': 'c', 'ÿ': 'y'}
+
+// entry: a file or folder in a system folder, with its size.
+type entry struct {
+	name string
+	size int64
+}
+
+// gamesIn: the games of one system folder: its files grouped by title (not artwork, game
+// lists or notes), and each game folder in it (not artwork folders).
+func gamesIn(system, folder string, files, dirs []entry) []Game {
+	idx := map[string]int{}
+	var out []Game
+	add := func(name string, size int64) {
+		t := GameTitle(name)
+		k := TitleKey(t)
+		if k == "" {
+			return
+		}
+		if i, ok := idx[k]; ok {
+			out[i].Size += size
+			return
+		}
+		idx[k] = len(out)
+		out = append(out, Game{Title: t, System: system, Folder: folder, Name: name, Size: size})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+	for _, f := range files {
+		if ext := strings.ToLower(path.Ext(f.name)); !notGame[ext] && !strings.EqualFold(f.name, "gamelist.xml") {
+			add(f.name, f.size)
+		}
 	}
 	for _, d := range dirs {
-		if !mediaDir[strings.ToLower(d)] {
-			n++
+		if !mediaDir[strings.ToLower(d.name)] {
+			add(d.name, d.size)
 		}
 	}
-	return n
+	return out
 }
 
 // Inside: the build's systems, most games first; nil when it has no games folder. Builds
@@ -127,9 +236,15 @@ func countGames(files, dirs []string) int64 {
 // template sets laid out per system): of those whose subfolders are mostly named like
 // systems, the build's is the one holding the most files.
 func (ix *Index) Inside() ([]System, error) {
+	sys, _, err := ix.Games()
+	return sys, err
+}
+
+// Games: the build's systems (as Inside) and every game in them.
+func (ix *Index) Games() ([]System, []Game, error) {
 	rows, err := ix.rw.Query("SELECT did, count FROM dirs WHERE lower(name) IN ('roms', 'games') AND did != 0")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	type cand struct{ did, files int64 }
 	var cands []cand
@@ -143,7 +258,7 @@ func (ix *Index) Inside() ([]System, error) {
 	for _, c := range cands {
 		r, err := ix.rw.Query("SELECT name FROM dirs WHERE parent = ?", c.did)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		score, subs := 0, 0
 		for r.Next() {
@@ -161,7 +276,7 @@ func (ix *Index) Inside() ([]System, error) {
 		}
 	}
 	if root < 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	type dir struct {
 		did        int64
@@ -170,7 +285,7 @@ func (ix *Index) Inside() ([]System, error) {
 	var systems []dir
 	rows, err = ix.rw.Query("SELECT did, name, path FROM dirs WHERE parent = ?", root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var d dir
@@ -178,35 +293,39 @@ func (ix *Index) Inside() ([]System, error) {
 		systems = append(systems, d)
 	}
 	rows.Close()
-	names := func(q string, did int64) ([]string, error) {
+	entries := func(q string, did int64) ([]entry, error) {
 		r, err := ix.rw.Query(q, did)
 		if err != nil {
 			return nil, err
 		}
 		defer r.Close()
-		var out []string
+		var out []entry
 		for r.Next() {
 			var n sql.NullString
-			_ = r.Scan(&n)
-			out = append(out, n.String)
+			var z sql.NullInt64
+			_ = r.Scan(&n, &z)
+			out = append(out, entry{n.String, z.Int64})
 		}
 		return out, r.Err()
 	}
 	var out []System
+	var games []Game
 	for _, d := range systems {
 		if mediaDir[strings.ToLower(d.name)] || strings.EqualFold(d.name, "bios") {
 			continue
 		}
-		files, err := names("SELECT name FROM dir_files WHERE did = ?", d.did)
+		files, err := entries("SELECT df.name, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ?", d.did)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		dirs, err := names("SELECT name FROM dirs WHERE parent = ?", d.did)
+		dirs, err := entries("SELECT name, size FROM dirs WHERE parent = ?", d.did)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if n := countGames(files, dirs); n > 0 {
-			out = append(out, System{Name: SystemName(d.name), Folder: d.path, Games: n})
+		name := SystemName(d.name)
+		if g := gamesIn(name, d.path, files, dirs); len(g) > 0 {
+			out = append(out, System{Name: name, Folder: d.path, Games: int64(len(g))})
+			games = append(games, g...)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -215,5 +334,5 @@ func (ix *Index) Inside() ([]System, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
-	return out, nil
+	return out, games, nil
 }

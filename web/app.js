@@ -758,17 +758,28 @@ function insideLine(sys) {
 }
 
 // ---------------------------------------------------------------- search
-// Search inside every share opened before (their saved file lists): which builds have it.
+// Search what's in every share opened before. Games first, one row per game and system with the
+// builds that have it ("mario 3": Super Mario Bros. 3 · NES · in 3 builds); then, on request or
+// when no game matches, the files and folders that match, share by share.
 async function pageSearch() {
   setTitle("Search");
-  const q = h("input", { class: "input", type: "search", placeholder: "Search inside every share you've opened: a game, a system, a BIOS…", value: store.get("search.q", "") });
+  const q = h("input", { class: "input", type: "search", placeholder: "A game, a series, a system, a BIOS… (\"mario 3\", \"smb3\", \"ff7\", \"scph1001\")", value: store.get("search.q", "") });
   const note = h("div", { class: "countline" });
-  const out = h("div", { class: "search-results" });
+  const gamesBox = h("div", { class: "search-results" });
+  const filesBox = h("div", { class: "search-results" });
   let timer = null, seq = 0;
-  const go = (sh, folder) => {
-    if (sh.link) store.set("link." + sh.id, sh.link);
-    location.hash = `#/share/${sh.id}` + (folder ? "/" + folder.split("/").map(encodeURIComponent).join("/") : "");
+  const go = (b, folder) => {
+    if (b.link) store.set("link." + b.id, b.link);
+    location.hash = `#/share/${b.id}` + (folder ? "/" + folder.split("/").map(encodeURIComponent).join("/") : "");
   };
+  const short = (t, n = 38) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+
+  const gameRow = (g) => h("div", { class: "gm-row" },
+    h("div", { class: "gm-t" }, h("b", {}, g.title), h("span", { class: "chip plain" }, g.system)),
+    h("div", { class: "gm-b" }, h("span", { class: "faint small" }, `in ${g.builds.length} build${g.builds.length === 1 ? "" : "s"}:`),
+      g.builds.map((b) => h("a", { class: "chip plain sys", href: "#", title: `${b.title}\n${b.folder}/${b.name}`, onclick: (ev) => { ev.preventDefault(); go(b, b.folder); } },
+        short(b.title), b.size ? h("span", { class: "faint" }, " " + fmtBytes(b.size)) : null))));
+
   const card = (sh) => h("div", { class: "panel sr" },
     h("div", { class: "head" }, icon("folder"), h("h2", {}, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go(sh, ""); } }, sh.title)), h("span", { class: "grow" }),
       h("span", { class: "muted small" }, `${sh.files.toLocaleString()} file${sh.files === 1 ? "" : "s"}` + (sh.folders ? ` · ${sh.folders.toLocaleString()} folder${sh.folders === 1 ? "" : "s"}` : ""))),
@@ -778,25 +789,45 @@ async function pageSearch() {
       h("span", { class: "muted small right nowrap" }, x.folder ? `${(x.count || 0).toLocaleString()} files · ${fmtBytes(x.size)}` : fmtBytes(x.size)))),
       sh.files + sh.folders > sh.hits.length ? h("div", { class: "faint small", style: { marginTop: "6px" } },
         `…and ${(sh.files + sh.folders - sh.hits.length).toLocaleString()} more: `, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go(sh, ""); } }, "open the share"), " and search there for all of them.") : null));
+
+  // the files and folders that match, share by share
+  async function searchFiles(v, my) {
+    put(filesBox, h("div", { class: "countline" }, h("span", { class: "spin" }), " Searching the files of every opened share…"));
+    let r;
+    try { r = await api("/search?q=" + encodeURIComponent(v)); }
+    catch (e) { if (my === seq) put(filesBox, h("div", { class: "countline bad-text" }, cap(e.message))); return; }
+    if (my !== seq) return;
+    const files = r.shares.reduce((a, x) => a + x.files, 0);
+    put(filesBox, h("h3", { class: "sr-h" }, "Files and folders"),
+      h("div", { class: "countline" }, r.shares.length ? `${files.toLocaleString()} file${files === 1 ? "" : "s"} in ${r.shares.length} of the ${r.searched} shares you've opened` : `No file or folder matches in the ${r.searched} share${r.searched === 1 ? "" : "s"} you've opened.`,
+        h("span", { class: "faint" }, ` · ${(r.ms / 1000).toFixed(1)} s`), r.failed ? h("span", { class: "bad-text" }, ` · ${r.failed} couldn't be searched`) : null,
+        r.timed_out ? h("span", { class: "bad-text" }, " · stopped after a minute: some shares weren't searched") : null),
+      r.shares.map(card));
+  }
+
   async function run() {
     const v = q.value.trim();
     store.set("search.q", v);
     const my = ++seq;
-    if ([...v].length < 2) { put(note, v ? "Type at least two letters." : "Finds files and folders in every share you've opened before. Shares you haven't opened aren't known yet."); put(out); return; }
+    put(filesBox);
+    if ([...v].length < 2) {
+      put(note, v ? "Type at least two letters." : "Searches every share you've opened before: games by name or abbreviation, and any file or folder. Shares you haven't opened aren't known yet.");
+      put(gamesBox); return;
+    }
     put(note, h("span", { class: "spin" }), " Searching…");
     let r;
-    try { r = await api("/search?q=" + encodeURIComponent(v)); }
+    try { r = await api("/search/games?q=" + encodeURIComponent(v)); }
     catch (e) { if (my === seq) put(note, h("span", { class: "bad-text" }, cap(e.message))); return; }
     if (my !== seq) return;
-    const files = r.shares.reduce((a, x) => a + x.files, 0);
-    put(note, r.shares.length ? `${files.toLocaleString()} file${files === 1 ? "" : "s"} in ${r.shares.length} of the ${r.searched} shares you've opened` : `Nothing matches in the ${r.searched} share${r.searched === 1 ? "" : "s"} you've opened.`,
-      h("span", { class: "faint" }, ` · ${(r.ms / 1000).toFixed(1)} s`), r.failed ? h("span", { class: "bad-text" }, ` · ${r.failed} couldn't be searched`) : null,
-      r.timed_out ? h("span", { class: "bad-text" }, " · stopped after a minute: some shares weren't searched") : null);
-    put(out, r.shares.map(card));
+    const filesBtn = h("button", { class: "btn sm", onclick: () => { filesBtn.remove(); searchFiles(v, my); } }, icon("file"), "Search files and folders too");
+    put(note, r.games.length ? `${r.total.toLocaleString()} game${r.total === 1 ? "" : "s"} in the ${r.builds} build${r.builds === 1 ? "" : "s"} with a game list` + (r.total > r.games.length ? ` (the best ${r.games.length} shown)` : "") : `No game matches in the ${r.builds} build${r.builds === 1 ? "" : "s"} with a game list.`,
+      h("span", { class: "faint" }, ` · ${r.ms} ms`));
+    put(gamesBox, r.games.length ? [h("div", { class: "panel gm" }, h("div", { class: "body" }, r.games.map(gameRow))), h("div", {}, filesBtn)] : null);
+    if (!r.games.length) searchFiles(v, my);   // nothing by game name: maybe a BIOS, a document…
   }
-  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 450); });
+  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 350); });
   q.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { clearTimeout(timer); run(); } });
-  $("#view").append(h("div", { class: "search-page" }, h("div", { class: "search big" }, icon("search"), q), note, out));
+  $("#view").append(h("div", { class: "search-page" }, h("div", { class: "search big" }, icon("search"), q), note, gamesBox, filesBox));
   q.focus();
   run();
 }

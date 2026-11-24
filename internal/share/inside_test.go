@@ -42,7 +42,7 @@ func TestInside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []System{{"SNES", "RetroBat/roms/snes", 2}, {"Mega Drive", "RetroBat/roms/megadrive", 1}, {"Nintendo 64", "RetroBat/roms/n64", 1},
+	want := []System{{"SNES", "RetroBat/roms/snes", 2}, {"Mega Drive / Genesis", "RetroBat/roms/megadrive", 1}, {"Nintendo 64", "RetroBat/roms/n64", 1},
 		{"PlayStation", "RetroBat/roms/psx", 1}, {"PlayStation 3", "RetroBat/roms/ps3", 1}}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v, want %+v", got, want)

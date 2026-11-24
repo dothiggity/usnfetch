@@ -19,7 +19,7 @@ import (
 // both from the share indexes kept in the cache (share/cache.go).
 
 // insideVersion: bump to work the summaries out again (after changing share.Inside).
-const insideVersion = 1
+const insideVersion = 3 // 2: games grouped by title, each build's game list kept; 3: one name per console
 
 // cachedIndex: the cache file this share's index is kept in (the full index if there is
 // one, else its file list, plain or zipped), "" if none.
@@ -83,15 +83,6 @@ func (s *Server) cachedShares() []cachedShare {
 	return out
 }
 
-// insideOf: what's inside an open index, as kept with the share's details.
-func insideOf(ix *share.Index) []share.System {
-	sys, err := ix.Inside()
-	if err != nil || sys == nil {
-		return []share.System{}
-	}
-	return sys
-}
-
 // fillInside works out what's inside each cached share that doesn't have it yet (shares
 // opened before this existed), one at a time, in the background.
 func (s *Server) fillInside() {
@@ -107,7 +98,10 @@ func (s *Server) fillInside() {
 		}
 		if ix.EnsureTree(nil) == nil {
 			if info = s.M.Store.ShareInfo(c.link); info != nil {
-				info["inside"], info["inside_v"] = insideOf(ix), insideVersion
+				if l, err := share.ParseLink(c.link); err == nil {
+					info["folder_id"] = l.FolderID
+				}
+				s.saveInside(ix, info)
 				_ = s.M.Store.SetShareInfo(c.link, info)
 				n++
 			}

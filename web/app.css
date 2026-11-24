@@ -179,6 +179,14 @@ table.t td.act { width: 1%; white-space: nowrap; text-align: right; }
 .sr-hit > a span, .sr-hit .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-hit > a svg.i { color: var(--faint); flex: none; }
 @media (max-width: 860px) { .sr-hit { grid-template-columns: minmax(0, 1fr) auto; } .sr-hit .path { display: none; } }
+/* game results: one row per game and system, with the builds that have it */
+.panel.gm > .body { padding: 4px 16px; }
+.gm-row { padding: 9px 0; border-bottom: 1px solid var(--border-soft); display: grid; gap: 5px; }
+.gm-row:last-child { border-bottom: 0; }
+.gm-t { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.gm-t b { font-size: 14.5px; }
+.gm-b { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.sr-h { margin: 8px 0 0; font-size: 15px; }
 .name-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .name-cell .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .name-cell svg.i { color: var(--faint); }

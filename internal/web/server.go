@@ -60,6 +60,7 @@ type Server struct {
 	sem       chan struct{}
 	mux       *http.ServeMux
 	lc        linkChecks // link checks of catalog entries
+	games     gameCache  // game lists for the game search (games.go)
 }
 
 type session struct {
@@ -414,7 +415,7 @@ func (s *Server) loadShare(ss *session, password string) {
 		info = map[string]any{}
 	}
 	info["name"], info["size"], info["files"], info["packed"], info["opened_at"] = name, sum.Size, sum.Files, sum.Packed, float64(time.Now().UnixNano())/1e9
-	info["inside"], info["inside_v"] = insideOf(ix), insideVersion // its systems and games (inside.go)
+	s.saveInside(ix, info) // its systems and games (games.go)
 	for _, k := range []string{"format", "version", "access", "created_at", "signature", "owner_fingerprint"} {
 		info[k] = ix.Info[k]
 	}
@@ -704,6 +705,7 @@ func (s *Server) routes() {
 	s.linkCheckRoutes()
 	s.revealRoutes()
 	s.searchRoutes()
+	s.gameRoutes()
 
 	// shares
 	s.api("POST /api/shares/open", func(w http.ResponseWriter, r *http.Request) (any, error) {
