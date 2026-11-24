@@ -926,6 +926,7 @@ func (m *Manager) run(j *Job) {
 	j.mu.Unlock()
 	state, detail := m.download(j, ix, accts)
 	ix.Close()
+	ReleaseMemory() // a big share's index build or file list: give it back now, not over minutes
 	if state == "completed" {
 		m.dropIndex(j)
 	}

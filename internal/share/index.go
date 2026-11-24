@@ -91,6 +91,10 @@ func NewBuilder(path string) (*Builder, error) {
 
 const rowsPerStmt = 400
 
+// segFlushRows: segment rows a single file's list is written in, so a file with millions
+// of segments never sits in memory as one buffer.
+const segFlushRows = 20000
+
 func (b *Builder) flushRows(table string, cols int, buf *[]any, verb string) error {
 	n := len(*buf) / cols
 	for n > 0 {
@@ -203,6 +207,13 @@ func (b *Builder) ApplyDoc(d *Doc, base int64) error {
 			b.fileBuf = append(b.fileBuf, b.nFiles, f.FileID, f.Path, f.Size, hash, nil, nil, int64(len(f.Segments)), nil, pid)
 			for j, idx := range f.Segments {
 				b.segBuf = append(b.segBuf, b.nFiles, int64(j), idx+base)
+				// one file can list millions of segments (an 8 TB disk image: 11.4 million);
+				// written as they come, or this buffer alone runs to gigabytes
+				if len(b.segBuf) >= 3*segFlushRows {
+					if err := b.flushRows("file_segs", 3, &b.segBuf, "INSERT"); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}

@@ -13,11 +13,13 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/http/pprof" // its handlers are mounted under /api/debug/pprof (the default mux it also fills is never served)
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -358,6 +360,7 @@ func (s *Server) loadShare(ss *session, password string) {
 	}
 	ss.mu.Unlock()
 	ss.log(fmt.Sprintf("ready: %s files, %.2f GB", commas(sum.Files), float64(sum.Size)/1e9))
+	app.ReleaseMemory() // building the index and its folder tree can peak at GBs: give it back now
 }
 
 func commas(n int64) string {
@@ -372,6 +375,25 @@ func commas(n int64) string {
 	return b.String()
 }
 
+// memoryReport: the process's memory (app.MemoryInfo) and the shares open in the browser.
+func (s *Server) memoryReport() map[string]any {
+	out := app.MemoryInfo()
+	open := []map[string]any{}
+	s.smu.Lock()
+	for _, ss := range s.sessions {
+		ss.mu.Lock()
+		o := map[string]any{"title": ss.Title, "state": ss.State, "idle_s": int(time.Since(ss.LastUsed).Seconds())}
+		if ss.Index != nil {
+			o["files"], o["pool_entries"] = ss.Index.FileCount, ss.Index.PoolCount
+		}
+		ss.mu.Unlock()
+		open = append(open, o)
+	}
+	s.smu.Unlock()
+	out["open_shares"] = open
+	return out
+}
+
 func (s *Server) closeSession(ss *session) { // s.smu held
 	delete(s.sessions, ss.ID)
 	ss.mu.Lock()
@@ -381,6 +403,7 @@ func (s *Server) closeSession(ss *session) { // s.smu held
 	if ix != nil {
 		s.M.UnpinIndex(ix.Path)
 		ix.Close()
+		app.ReleaseMemory()
 	}
 }
 
@@ -505,6 +528,18 @@ func (s *Server) routes() {
 		return map[string]any{"ok": true}, nil
 	})
 	s.api("GET /api/status", s.status)
+	// diagnostics (behind the same login as the rest of /api): memory split into Go's and
+	// SQLite's share, what is open, and Go heap profiles for `go tool pprof`
+	s.api("GET /api/debug/memory", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return s.memoryReport(), nil
+	})
+	s.api("POST /api/debug/memory/release", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		debug.FreeOSMemory() // what is left after this is in use, not garbage waiting to go
+		return s.memoryReport(), nil
+	})
+	for _, name := range []string{"heap", "allocs", "goroutine"} {
+		s.mux.Handle("GET /api/debug/pprof/"+name, pprof.Handler(name))
+	}
 	s.api("POST /api/system/restart", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if s.Restart == nil {
 			return nil, fail(400, "usnfetch can restart itself when it runs in the tray (usnfetch tray)", "no_restart")

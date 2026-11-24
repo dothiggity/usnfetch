@@ -1726,11 +1726,15 @@ async function pageSystem() {
   every(2000, async () => {
     try {
       const st = await api("/status");
+      const mem = await api("/debug/memory").catch(() => null);
       restartBtn.classList.toggle("hidden", !st.can_restart);
       put(cards,
         h("div", { class: "card" }, h("div", { class: "k" }, "Version"), h("div", { class: "v" }, st.version), h("div", { class: "s" }, st.runtime || ("Python " + st.python))),
         h("div", { class: "card" }, h("div", { class: "k" }, "Free space"), h("div", { class: "v" }, fmtBytes(st.disk.free)), h("div", { class: "s", title: st.disk.path }, st.disk.path)),
         h("div", { class: "card" }, h("div", { class: "k" }, "Jobs"), h("div", { class: "v" }, `${st.running} running`), h("div", { class: "s" }, `${st.active} in the queue · ${st.open_shares} shares open`)),
+        h("div", { class: "card", title: "Go: usnfetch's own data. SQLite & other: the share indexes' working memory and the rest." },
+          h("div", { class: "k" }, "Memory"), h("div", { class: "v" }, mem && mem.private ? fmtBytes(mem.private) : "—"),
+          h("div", { class: "s" }, mem && mem.private ? `Go ${fmtBytes(mem.go_heap_in_use)} · SQLite & other ${fmtBytes(mem.other || 0)}` : "")),
         h("div", { class: "card wide" }, h("div", { class: "k" }, "Accounts"), h("div", { class: "v", style: { fontSize: "14px", whiteSpace: "normal" } }, st.accounts || "none configured"), h("div", { class: "s", title: st.data_dir }, "data: " + st.data_dir)));
       const l = await api("/logs?after=" + seq);
       if (l.lines.length) {
