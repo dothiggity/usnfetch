@@ -23,8 +23,9 @@ import (
 	webui "usnfetch/web"
 )
 
-// Version of the Go build.
-const Version = "0.9.0"
+// Version of the program, without the "v". Release builds set it from the git tag
+// (GoReleaser: -ldflags "-X main.Version=0.10.0"); keep this in step for local builds.
+var Version = "0.10.0"
 
 type serveOpts struct {
 	host      string

@@ -60,7 +60,7 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
 
 main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .top { display: flex; align-items: center; gap: 14px; padding: 16px 28px; border-bottom: 1px solid var(--border-soft); background: color-mix(in srgb, var(--bg) 92%, transparent); position: sticky; top: 0; z-index: 5; backdrop-filter: blur(6px); min-height: 64px; }
-.top h1 { margin: 0; font-size: 19px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top h1 { margin: 0; font-size: 19px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 7em; }   /* a full toolbar never squeezes "Catalog" to "Cat…" */
 .top .crumb { color: var(--muted); font-weight: 500; }
 #toolbar { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 #view { padding: 22px 28px 40px; flex: 1; }
@@ -109,6 +109,14 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); c
 .chip.info { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .chip.packed { color: var(--packed); border-color: color-mix(in srgb, var(--packed) 40%, transparent); background: color-mix(in srgb, var(--packed) 10%, transparent); }
 .chip.plain { background: transparent; }
+/* catalog launcher / device chips: a click filters by them */
+.chip.tag { cursor: pointer; background: transparent; }
+.chip.tag.launcher { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.chip.tag:hover, .chip.tag:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
+select.input.on { border-color: var(--accent); }
+#toolbar select.input { max-width: 12em; }   /* a long option (a device name) doesn't widen the menu */
+.card .s.credit a { color: inherit; font-weight: 600; text-decoration: none; }
+.card .s.credit a:hover { color: var(--accent); text-decoration: underline; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
 
 /* ---------- panels, cards ---------- */

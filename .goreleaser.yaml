@@ -1,0 +1,95 @@
+# GoReleaser configuration for usnfetch.
+#
+# Release:  write .github/release-notes/v0.10.0.md, bump Version in cmd/usnfetch/serve.go, commit,
+#           git tag -a v0.10.0 -m "usnfetch 0.10.0" && git push origin main v0.10.0
+#           .github/workflows/release.yml runs the tests, then `goreleaser release --clean`.
+# Try it locally without publishing (writes ./dist, which .gitignore already excludes):
+#           goreleaser release --snapshot --clean
+#
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: usnfetch
+
+builds:
+  - id: usnfetch
+    main: ./cmd/usnfetch
+    binary: usnfetch
+    env:
+      - CGO_ENABLED=0 # pure Go everywhere (modernc.org/sqlite, fyne.io/systray on Windows)
+    goos: [windows, linux, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      # Intel Macs: not built. Remove these two lines to add darwin/amd64 (it compiles).
+      - goos: darwin
+        goarch: amd64
+    flags:
+      - -trimpath
+    ldflags:
+      # main.Version comes from the tag: v0.10.0 -> "0.10.0" (`var Version` in cmd/usnfetch/serve.go).
+      - -s -w -X main.Version={{ .Version }}
+    # Reproducible: file times inside the archives come from the commit, not the build clock.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # The exe icon: cmd/usnfetch/rsrc_windows_{amd64,arm64}.syso are linked in by `go build`
+    # automatically for those two targets; nothing to configure. The web UI is go:embed.
+
+archives:
+  - id: usnfetch
+    # zip on Windows (Explorer opens it), tar.gz elsewhere (keeps the executable bit).
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # usnfetch-0.10.0-windows-amd64.zip, usnfetch-0.10.0-linux-arm64.tar.gz, ...
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    # No wrapping folder: the data lives in its own folder (%LOCALAPPDATA%\usnfetch), so an
+    # upgrade is "replace usnfetch.exe in the folder you already use".
+    wrap_in_directory: false
+    files:
+      - README.md
+      - LICENSE
+    builds_info:
+      mtime: "{{ .CommitDate }}"
+
+checksum:
+  name_template: "{{ .ProjectName }}-{{ .Version }}-checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  # Local test builds: 0.10.1-dev+abc1234 (never published).
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
+
+changelog:
+  # Only used when a tag has no .github/release-notes/<tag>.md: then the commit subjects since
+  # the previous tag. The notes stay editable on GitHub after publishing.
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge "
+      - "^(docs|test|tests|ci|chore)(\\(.*\\))?:"
+
+release:
+  # owner/name are taken from the git remote (dothiggity/usnfetch).
+  name_template: "usnfetch {{ .Version }}"
+  # v1.0.0-rc.1, v0.10.0-beta.1 ... are marked as pre-releases (not "Latest").
+  prerelease: auto
+  # GoReleaser creates the release as a draft, uploads every file, then publishes it.
+  # Set draft: true to publish by hand after a look.
+  draft: false
+  footer: |
+    ---
+    **Which file?** Windows: `usnfetch-{{ .Version }}-windows-amd64.zip` (`-arm64` for Windows on Arm).
+    Linux: `-linux-amd64.tar.gz` / `-linux-arm64.tar.gz` (Raspberry Pi 4/5 with a 64-bit OS).
+    macOS (Apple silicon, untested): `-darwin-arm64.tar.gz`.
+
+    **Upgrading:** stop usnfetch, replace `usnfetch.exe` (or `usnfetch`) with the new one, start it again.
+    Settings and downloads stay where they are.
+
+    **Windows "protected your PC":** these builds are not code-signed yet, so SmartScreen may warn on
+    first run. Check the download against `usnfetch-{{ .Version }}-checksums.txt`
+    (PowerShell: `Get-FileHash .\usnfetch-{{ .Version }}-windows-amd64.zip`), then choose
+    *More info → Run anyway*.

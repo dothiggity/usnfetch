@@ -15,8 +15,10 @@ shares either. You bring your own links, and what you download is up to you.
 
 ## Getting started
 
-There's nothing to install. Builds are going to live on the Releases page; until the first one is
-up, building it yourself takes one command (see further down).
+There's nothing to install. Grab the latest build from the
+[Releases page](https://github.com/dothiggity/usnfetch/releases): the `windows-amd64` zip for most
+Windows PCs, `linux-amd64` or `linux-arm64` (a Raspberry Pi 4 or 5 with a 64-bit OS) for Linux.
+Building it yourself takes one command too (see further down).
 
 Unzip it wherever you like. On Windows, double-click `usnfetch.exe`: it settles in next to the
 clock and opens the web page in your browser. From a terminal it's:
@@ -55,6 +57,11 @@ usnfetch opens the share links you already have. There are three ways in:
 - **Activity → Add links.** Paste one or more links to download them whole, no browsing.
 
 The links stay on your machine, in the data folder.
+
+Once the catalog gets big, two menus narrow it down: the launcher a build runs (Batocera,
+RetroBat, LaunchBox, RetroPie…) and the device it's for (PC, Steam Deck, ROG Ally, Raspberry Pi 4
+or 5, Anbernic…). usnfetch reads those from the titles and labels, so there's nothing to tag by
+hand. Click a launcher or device chip on any entry to see only those.
 
 ## What it's like to use
 
@@ -143,13 +150,13 @@ Release builds are plain cross-compiles with no C toolchain needed:
 
 A quick map of the code:
 
-    cmd/usnfetch/      the program itself: serve, tray, list, fetch, set-password
+    cmd/usnfetch/      the program itself: serve, tray, list, fetch, set-password, version
     internal/share/    share links, manifests and signatures, building and searching the index
     internal/engine/   the downloading: connections, decrypting, packed small files, streaming, speed limit
     internal/nntp/     a small NNTP client
     internal/yenc/     yEnc decoding
     internal/app/      settings, the job queue, the schedule, saved state
-    internal/catalog/  reading link lists
+    internal/catalog/  reading link lists, and the launcher and device each entry is for
     internal/extract/  finding and unpacking archives (7-Zip / UnRAR)
     internal/web/      the web API: shares, gallery, files already on disk, setup
     web/               the browser UI
@@ -157,6 +164,17 @@ A quick map of the code:
 ## Tests
 
     go test ./...
+
+## Making a release
+
+Write what changed in `.github/release-notes/v<version>.md`, set `Version` in
+`cmd/usnfetch/serve.go` to match, commit, then tag and push:
+
+    git tag -a v0.10.0 -m "usnfetch 0.10.0"
+    git push origin main v0.10.0
+
+GitHub Actions runs the tests on Windows and Linux, builds every download with GoReleaser
+(`.goreleaser.yaml`) and publishes the release with those notes.
 
 ## License
 

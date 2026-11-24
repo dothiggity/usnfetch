@@ -454,18 +454,30 @@ async function downloadEntries(entries, done) {
 
 async function pageCatalog() {
   setTitle("Catalog");
-  const f = { q: store.get("cat.q", ""), source: store.get("cat.source", ""), hide: store.get("cat.hide", false), sort: store.get("cat.sort", "title") };
-  let data = { entries: [], sources: [], categories: ["Default"] };
+  const f = { q: store.get("cat.q", ""), source: store.get("cat.source", ""), launcher: store.get("cat.launcher", ""), device: store.get("cat.device", ""),
+    hide: store.get("cat.hide", false), sort: store.get("cat.sort", "title") };
+  let data = { entries: [], sources: [], categories: ["Default"], tags: { launchers: [], devices: [], groups: [] } };
+  let groupOf = {}, deviceRank = {};   // device -> its group; device -> its place in the device list
   const sel = new Set();
   const view = $("#view");
 
   const q = h("input", { class: "input", placeholder: "Search titles, sources, SKUs…", value: f.q, oninput: () => { f.q = q.value; store.set("cat.q", f.q); render(); } });
   const src = h("select", { class: "input", onchange: () => { f.source = src.value; store.set("cat.source", f.source); render(); } });
+  // launcher (Batocera, RetroBat, LaunchBox…) and device (PC, Steam Deck, Raspberry Pi 5…), read
+  // from the titles and labels by the server. Device values: a device, "g:<group>", or "-" (none named)
+  const lsel = h("select", { class: "input", title: "What the build runs: Batocera, RetroBat, LaunchBox…", onchange: () => setTag("launcher", lsel.value) });
+  const dsel = h("select", { class: "input", title: "What the build is for: PC, Steam Deck, ROG Ally, Raspberry Pi…", onchange: () => setTag("device", dsel.value) });
+  function setTag(which, v) {
+    f[which] = v; store.set("cat." + which, v);
+    (which === "launcher" ? lsel : dsel).value = v;
+    render();
+  }
   const sort = h("select", { class: "input", onchange: () => { f.sort = sort.value; store.set("cat.sort", f.sort); render(); } },
-    [["title", "Title"], ["size-desc", "Size: largest"], ["size-asc", "Size: smallest"], ["added", "Recently added"], ["status", "Status"]]
+    [["title", "Title"], ["size-desc", "Size: largest"], ["size-asc", "Size: smallest"], ["added", "Recently added"], ["status", "Status"],
+      ["launcher", "Launcher"], ["device", "Device"]]
       .map(([v, l]) => h("option", { value: v, selected: f.sort === v }, l)));
   const hide = h("input", { type: "checkbox", checked: f.hide, onchange: () => { f.hide = hide.checked; store.set("cat.hide", f.hide); render(); } });
-  const filters = [h("div", { class: "search" }, icon("search"), q), src, sort, h("label", { class: "check", title: "Hide entries that are queued or downloaded in full" }, hide, "Hide queued / done")];
+  const filters = [h("div", { class: "search" }, icon("search"), q), src, lsel, dsel, sort, h("label", { class: "check", title: "Hide entries that are queued or downloaded in full" }, hide, "Hide queued / done")];
   const importBtn = h("button", { class: "btn primary", onclick: () => importDialog(load) }, icon("upload"), "Import list");
   toolbar(...filters, h("button", { class: "btn", onclick: openLinkDialog }, icon("link"), "Open link"), importBtn);
 
@@ -496,14 +508,55 @@ async function pageCatalog() {
   const active = (e) => e.job && ACTIVE.has(e.job.state);
   const complete = (e) => !!(e.got && e.got.complete);
   const done = (e) => active(e) || complete(e);
+  const launchers = (e) => e.launchers || [], devices = (e) => e.devices || [];
+  function tagOk(tags, want) {
+    if (!want) return true;
+    if (want === "-") return !tags.length;
+    if (want.startsWith("g:")) return tags.some((t) => groupOf[t] === want.slice(2));
+    return tags.includes(want);
+  }
   function visible() {
     const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
     let out = data.entries.filter((e) => (!f.source || e.source === f.source) && !(f.hide && done(e)) &&
-      words.every((w) => `${e.title} ${e.variant} ${e.listed} ${e.source} ${e.sku} ${e.name} ${(e.also || []).join(" ")}`.toLowerCase().includes(w)));
+      tagOk(launchers(e), f.launcher) && tagOk(devices(e), f.device) &&
+      words.every((w) => `${e.title} ${e.variant} ${e.listed} ${e.source} ${e.sku} ${e.name} ${(e.also || []).join(" ")} ${launchers(e).join(" ")} ${devices(e).join(" ")}`.toLowerCase().includes(w)));
     const rank = (e) => (active(e) ? 3 : complete(e) ? 2 : e.got ? 1 : 0);
+    const title = (a, b) => a.title.localeCompare(b.title);
+    // grouped by the first launcher (A to Z) or device (in the device list's order); none named last
+    const firstL = (e) => launchers(e)[0] || "\uffff", firstD = (e) => (devices(e).length ? deviceRank[devices(e)[0]] ?? 1e6 : 1e7);
     const by = { "size-desc": (a, b) => size(b) - size(a), "size-asc": (a, b) => size(a) - size(b), added: (a, b) => (b.added || 0) - (a.added || 0),
-      status: (a, b) => rank(b) - rank(a), title: (a, b) => a.title.localeCompare(b.title) }[f.sort];
+      status: (a, b) => rank(b) - rank(a), title,
+      launcher: (a, b) => firstL(a).localeCompare(firstL(b)) || title(a, b), device: (a, b) => firstD(a) - firstD(b) || title(a, b) }[f.sort] || title;
     return out.sort(by);
+  }
+
+  // the launcher and device chips of a row: a click shows only entries with that one (again: all)
+  const tagChip = (which, t) => {
+    const pick = () => setTag(which, f[which] === t ? "" : t);
+    return h("span", { class: "chip tag " + which, role: "button", tabindex: "0",
+      title: f[which] === t ? "Show every entry again" : `Show only ${which === "launcher" ? "builds running" : "builds for"} ${t}`,
+      onclick: pick, onkeydown: (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } } }, t);
+  };
+
+  function fillTagMenus() {
+    const tags = data.tags || { launchers: [], devices: [], groups: [] };
+    groupOf = {}; deviceRank = {};
+    tags.devices.forEach((d, i) => { groupOf[d.name] = d.group; deviceRank[d.name] = i; });
+    const noneL = data.entries.filter((e) => !launchers(e).length).length, noneD = data.entries.filter((e) => !devices(e).length).length;
+    const opt = (v, label, n, cur) => h("option", { value: v, selected: cur === v }, n == null ? label : `${label} (${n})`);
+    lsel.replaceChildren(opt("", "All launchers", null, f.launcher), ...tags.launchers.map((l) => opt(l.name, l.name, l.count, f.launcher)),
+      noneL ? opt("-", "None named", noneL, f.launcher) : null);
+    const ANY = { "Handheld PCs": "Any handheld PC", "Raspberry Pi": "Any Raspberry Pi", "Retro handhelds": "Any retro handheld", "Other boards": "Any other board", Consoles: "Any console" };
+    dsel.replaceChildren(opt("", "All devices", null, f.device), ...tags.groups.map((g) => {
+      const ds = tags.devices.filter((d) => d.group === g);
+      if (!ds.length) return null;
+      const n = data.entries.filter((e) => devices(e).some((t) => groupOf[t] === g)).length;
+      return h("optgroup", { label: g }, ds.length > 1 ? opt("g:" + g, ANY[g] || "Any " + g, n, f.device) : null, ...ds.map((d) => opt(d.name, d.name === g ? d.name + " (model not named)" : d.name, d.count, f.device)));
+    }), noneD ? opt("-", "None named", noneD, f.device) : null);
+    // a remembered choice the catalog no longer has: show everything rather than nothing
+    for (const [which, el] of [["launcher", lsel], ["device", dsel]]) {
+      if (f[which] && el.value !== f[which]) { f[which] = ""; store.set("cat." + which, ""); el.value = ""; }
+    }
   }
 
   // status: a running job first; then whether the share is on disk in full or in part
@@ -529,6 +582,7 @@ async function pageCatalog() {
 
   function render() {
     const total = data.entries.length;
+    lsel.classList.toggle("on", !!f.launcher); dsel.classList.toggle("on", !!f.device);   // a filter is narrowing the list
     for (const el of filters) el.classList.toggle("hidden", !total);   // nothing to filter yet
     thead.classList.toggle("hidden", !total);
     const vis = visible();
@@ -537,7 +591,9 @@ async function pageCatalog() {
       return h("tr", { class: sel.has(e.id) ? "sel" : "" },
         h("td", { class: "cb" }, cb),
         h("td", { class: "title-cell" }, h("a", { class: "t1", href: "#", title: "Browse this share", onclick: (ev) => { ev.preventDefault(); openShare({ catalog_id: e.id }).catch(fail); } }, e.title),
-          h("div", { class: "t2" }, e.variant ? h("span", {}, e.variant) : null, e.source ? h("span", { class: "chip plain" }, e.source) : null,
+          h("div", { class: "t2" }, e.variant ? h("span", {}, e.variant) : null,
+            launchers(e).map((t) => tagChip("launcher", t)), devices(e).map((t) => tagChip("device", t)),
+            e.source ? h("span", { class: "chip plain" }, e.source) : null,
             e.sku ? h("span", { class: "faint mono" }, e.sku) : null,
             e.info ? h("a", { href: e.info, target: "_blank", rel: "noopener", title: e.info }, icon("ext")) : null)),
         h("td", { class: "right nowrap" }, sizeCell(e)),
@@ -582,6 +638,7 @@ async function pageCatalog() {
   async function load() {
     data = await api("/catalog");
     src.replaceChildren(h("option", { value: "" }, "All sources"), ...data.sources.map((s) => h("option", { value: s, selected: f.source === s }, s)));
+    fillTagMenus();
     render();
   }
   await load();
@@ -1729,7 +1786,8 @@ async function pageSystem() {
       const mem = await api("/debug/memory").catch(() => null);
       restartBtn.classList.toggle("hidden", !st.can_restart);
       put(cards,
-        h("div", { class: "card" }, h("div", { class: "k" }, "Version"), h("div", { class: "v" }, st.version), h("div", { class: "s" }, st.runtime || ("Python " + st.python))),
+        h("div", { class: "card" }, h("div", { class: "k" }, "Version"), h("div", { class: "v" }, st.version), h("div", { class: "s" }, st.runtime || ("Python " + st.python)),
+          h("div", { class: "s credit" }, "Made by ", h("a", { href: "https://github.com/dothiggity", target: "_blank", rel: "noopener" }, "dothiggity"))),
         h("div", { class: "card" }, h("div", { class: "k" }, "Free space"), h("div", { class: "v" }, fmtBytes(st.disk.free)), h("div", { class: "s", title: st.disk.path }, st.disk.path)),
         h("div", { class: "card" }, h("div", { class: "k" }, "Jobs"), h("div", { class: "v" }, `${st.running} running`), h("div", { class: "s" }, `${st.active} in the queue · ${st.open_shares} shares open`)),
         h("div", { class: "card", title: "Go: usnfetch's own data. SQLite & other: the share indexes' working memory and the rest." },

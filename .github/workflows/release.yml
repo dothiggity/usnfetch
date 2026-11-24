@@ -1,0 +1,87 @@
+# Release: push a version tag and this tests the tagged commit, then builds and publishes a
+# GitHub release with the program for Windows, Linux and macOS attached.
+#
+#   git tag -a v0.10.0 -m "usnfetch 0.10.0"
+#   git push origin main v0.10.0
+#
+# The release text comes from .github/release-notes/<tag>.md when that file exists (otherwise
+# GoReleaser lists the commit subjects since the previous tag), followed by the "Which file?"
+# footer in .goreleaser.yaml.
+#
+# Runs only for tags, so the repository's free Actions minutes go on releases, not on every push.
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+" # v0.10.0
+      - "v[0-9]+.[0-9]+.[0-9]+-*" # v1.0.0-rc.1 (published as a pre-release)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Unit tests
+        # 7-Zip is on both runner images, so internal/extract runs its archive tests; WinRAR's
+        # rar is not, so the RAR-set tests skip, as they do on a machine without it.
+        run: go test -count=1 ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the release and upload its files
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # all history and tags: the version and the changelog come from them
+          persist-credentials: false
+
+      - name: The tag must be on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at a commit that is not on main"; exit 1
+          fi
+
+      - name: Release notes for this tag
+        id: notes
+        run: |
+          f=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then echo "args=--release-notes $f" >> "$GITHUB_OUTPUT"; else echo "No $f: using the commit list"; fi
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false # release builds start clean
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean ${{ steps.notes.outputs.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

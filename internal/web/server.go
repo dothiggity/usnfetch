@@ -963,9 +963,26 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 	entries := s.Cat.Snapshot()
 	out := make([]map[string]any, 0, len(entries))
 	sources := map[string]bool{}
+	// ?launcher= and ?device= (a device or a device group; "none": the entries naming none)
+	wantL, wantD := strings.TrimSpace(r.URL.Query().Get("launcher")), strings.TrimSpace(r.URL.Query().Get("device"))
+	nLaunchers, nDevices := map[string]int{}, map[string]int{}
 	for _, e := range entries {
 		if e.Source != "" {
 			sources[e.Source] = true
+		}
+		var extra []string
+		if name, ok := infos[e.Link]["name"].(string); ok && name != "" {
+			extra = append(extra, name) // the opened share's own name
+		}
+		launchers, devices := catalog.Tags(e, extra...)
+		for _, l := range launchers {
+			nLaunchers[l]++
+		}
+		for _, d := range devices {
+			nDevices[d]++
+		}
+		if !tagWanted(wantL, launchers, nil) || !tagWanted(wantD, devices, catalog.DeviceGroup) {
+			continue
 		}
 		var jv, sh, health any
 		if j, ok := jobs[e.Link]; ok {
@@ -985,7 +1002,25 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 		}
 		out = append(out, map[string]any{"id": app.LinkID(e.Link), "link": e.Link, "title": e.Title, "variant": e.Variant, "listed": e.Listed,
 			"listed_size": e.Size, "source": e.Source, "sku": e.SKU, "info": e.Info, "also": also, "added": e.Added,
-			"name": catalog.JobName(e, 90), "job": jv, "share": sh, "health": health, "got": got(e.Link)})
+			"name": catalog.JobName(e, 90), "job": jv, "share": sh, "health": health, "got": got(e.Link),
+			"launchers": launchers, "devices": devices})
+	}
+	type tagCount struct {
+		Name  string `json:"name"`
+		Group string `json:"group,omitempty"`
+		Count int    `json:"count"`
+	}
+	tl, td := []tagCount{}, []tagCount{}
+	for name, n := range nLaunchers {
+		tl = append(tl, tagCount{Name: name, Count: n})
+	}
+	sort.Slice(tl, func(i, j int) bool { return strings.ToLower(tl[i].Name) < strings.ToLower(tl[j].Name) })
+	for _, g := range catalog.DeviceGroups {
+		for _, name := range catalog.DeviceNames {
+			if n := nDevices[name]; n > 0 && catalog.DeviceGroup(name) == g {
+				td = append(td, tagCount{Name: name, Group: g, Count: n})
+			}
+		}
 	}
 	srcs := []string{}
 	for k := range sources {
@@ -996,7 +1031,25 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 	if def == "" {
 		def = "Default"
 	}
-	return map[string]any{"entries": out, "sources": srcs, "categories": s.M.Settings.Categories, "default_category": def}, nil
+	return map[string]any{"entries": out, "sources": srcs, "categories": s.M.Settings.Categories, "default_category": def,
+		"tags": map[string]any{"launchers": tl, "devices": td, "groups": catalog.DeviceGroups}}, nil
+}
+
+// tagWanted: whether tags pass a ?launcher= / ?device= filter: none given, "none" (no tags),
+// one of the tags, or (devices) the group of one of them; letter case is ignored.
+func tagWanted(want string, tags []string, group func(string) string) bool {
+	switch {
+	case want == "":
+		return true
+	case strings.EqualFold(want, "none"):
+		return len(tags) == 0
+	}
+	for _, t := range tags {
+		if strings.EqualFold(t, want) || (group != nil && strings.EqualFold(group(t), want)) {
+			return true
+		}
+	}
+	return false
 }
 
 // selection is a resolved choice of files and folders of a share.

@@ -279,6 +279,7 @@ func usage() {
   usnfetch list  --link LINK [account flags]                       files in a share
   usnfetch fetch --link LINK --file F --out PATH [--verify]        download one file
   usnfetch set-password [--data DIR]                               web login password
+  usnfetch version                                                 print the version
 
 account flags: --server --port --ssl 1|0 --user --pass --connections N,
 or env USNFETCH_SERVER / USNFETCH_PORT / USNFETCH_SSL / USNFETCH_USER / USNFETCH_PASS
@@ -315,6 +316,8 @@ func main() {
 		code = cmdServe(os.Args[2:])
 	case "set-password":
 		code = cmdSetPassword(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println(Version)
 	case "-h", "--help", "help":
 		usage()
 	default:
