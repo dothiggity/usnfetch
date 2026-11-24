@@ -73,8 +73,11 @@ type session struct {
 	Index    *share.Index
 	Check    any
 	Checking bool
+	Fetching bool   // fetching the full index (the share was opened from its saved file list)
+	FetchErr string // why the last fetch of the full index failed
 	LastUsed time.Time
 	art      map[string]*artIndex // gallery artwork per game folder kind (gallery.go)
+	password string               // the share password it was opened with (to fetch the full index later)
 }
 
 func (s *session) log(m string) {
@@ -351,7 +354,7 @@ func (s *Server) openShare(link, title, password string) (*session, error) {
 			title = str(info["name"])
 		}
 	}
-	ss := &session{ID: id, Link: link, Title: title, State: "loading", LastUsed: time.Now()}
+	ss := &session{ID: id, Link: link, Title: title, State: "loading", LastUsed: time.Now(), password: password}
 	s.sessions[id] = ss
 	s.smu.Unlock()
 	go s.loadShare(ss, password)
@@ -373,7 +376,8 @@ func (s *Server) loadShare(ss *session, password string) {
 		fail("error", err.Error())
 		return
 	}
-	ix, err := share.LoadShare(ss.Link, share.LoadOpts{Accounts: accts.All(), Password: password, IndexDir: s.M.IndexDir(), Log: ss.log})
+	// browsing: a saved file list will do; downloads, previews and checks fetch the rest (fullindex.go)
+	ix, err := share.LoadShare(ss.Link, share.LoadOpts{Accounts: accts.All(), Password: password, IndexDir: s.M.IndexDir(), Log: ss.log, ListOK: true})
 	if err != nil {
 		if errors.Is(err, share.ErrPassword) {
 			fail("password", err.Error())
@@ -415,7 +419,7 @@ func (s *Server) loadShare(ss *session, password string) {
 	// a share without a recent availability check gets one now, so the catalog's Health fills
 	// in for every share you open (marked as checking in the same step it becomes ready)
 	autoCheck := false
-	if needsCheck(info) {
+	if ix.HasPool && needsCheck(info) {
 		if _, err := s.M.Accounts(); err == nil {
 			autoCheck = true
 		}
@@ -479,7 +483,7 @@ func (s *Server) closeSession(ss *session) { // s.smu held
 		s.M.UnpinIndex(ix.Path)
 		ix.Close()
 		app.ReleaseMemory()
-		s.M.CompressIdleIndexes() // its index is idle now: compress it (Windows)
+		s.M.TidyIndexCache() // its index is idle now
 	}
 }
 
@@ -488,7 +492,7 @@ func (s *Server) janitor() {
 		s.smu.Lock()
 		for _, ss := range s.sessions {
 			ss.mu.Lock()
-			idle := time.Since(ss.LastUsed) > idleClose && !ss.Checking
+			idle := time.Since(ss.LastUsed) > idleClose && !ss.Checking && !ss.Fetching
 			ss.mu.Unlock()
 			if idle {
 				s.closeSession(ss)
@@ -530,7 +534,8 @@ func (s *Server) shareJSON(ss *session) map[string]any {
 		logs = logs[len(logs)-40:]
 	}
 	out := map[string]any{"id": ss.ID, "link": ss.Link, "title": ss.Title, "state": ss.State, "error": ss.Error, "error_code": ss.Code,
-		"log": append([]string{}, logs...), "checking": ss.Checking, "check": ss.Check, "info": nil, "catalog": nil, "index": nil}
+		"log": append([]string{}, logs...), "checking": ss.Checking, "check": ss.Check, "info": nil, "catalog": nil, "index": nil,
+		"list_only": ss.Index != nil && !ss.Index.HasPool, "fetching": ss.Fetching, "fetch_error": ss.FetchErr}
 	if ss.State == "ready" {
 		out["info"] = s.M.Store.ShareInfo(ss.Link)
 	}
@@ -780,7 +785,19 @@ func (s *Server) routes() {
 		if err != nil {
 			return nil, err
 		}
+		if err := s.needFull(ss); err != nil {
+			return nil, err
+		}
 		s.startCheck(ss, ix, min(4096, max(8, num(body(r)["sample"], 64))))
+		return s.shareJSON(ss), nil
+	})
+	// a share opened from its saved file list: fetch the rest of its index now
+	s.api("POST /api/shares/{sid}/fetch", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		ss, _, err := s.ready(r.PathValue("sid"))
+		if err != nil {
+			return nil, err
+		}
+		s.fetchFull(ss)
 		return s.shareJSON(ss), nil
 	})
 	s.api("POST /api/shares/{sid}/download", s.shareDownload)
@@ -1382,7 +1399,7 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) (any, err
 // shareFile streams a file straight from Usenet, honouring one HTTP range (players seek
 // with these); nothing is written to disk.
 func (s *Server) shareFile(w http.ResponseWriter, r *http.Request) {
-	_, ix, err := s.ready(r.PathValue("sid"))
+	ss, ix, err := s.ready(r.PathValue("sid"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -1391,6 +1408,19 @@ func (s *Server) shareFile(w http.ResponseWriter, r *http.Request) {
 	fe, err := ix.File(fid)
 	if err != nil || fe == nil || !fe.Downloadable() {
 		writeErr(w, fail(404, "no such file in this share", ""))
+		return
+	}
+	if isImage(fe.Path) && fe.Size <= artMaxFile && r.URL.Query().Get("download") != "1" {
+		ct := mime.TypeByExtension(strings.ToLower(path.Ext(fe.Path)))
+		if ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		if s.serveArt(w, r, ix, *fe, path.Base(strings.ReplaceAll(fe.Path, "\\", "/"))) {
+			return
+		}
+	}
+	if err := s.needFull(ss); err != nil {
+		writeErr(w, err)
 		return
 	}
 	pool, sem, err := s.streamResources()
@@ -1508,6 +1538,8 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 	getInt("missing_retries", &st.MissingRetries)
 	getInt("max_parallel_jobs", &st.MaxParallelJobs)
 	getInt("stream_connections", &st.StreamConnections)
+	getInt("index_cache_gb", &st.IndexCacheGB)
+	st.IndexCacheGB = min(10000, max(0, st.IndexCacheGB))
 	getBool("verify", &st.Verify)
 	getBool("extract", &st.Extract)
 	getBool("extract_standalone", &st.ExtractStandalone)

@@ -238,6 +238,9 @@ func (s *Server) buildArt(r *http.Request, ix *share.Index, g galleryInfo, folde
 
 // loadLaunchBoxTitles reads the platform's game list (streamed from Usenet).
 func (s *Server) loadLaunchBoxTitles(a *artIndex, ix *share.Index, xmlPath string) error {
+	if !ix.HasPool {
+		return nil // only the file list is saved: titles come from the ROM names until the rest is fetched
+	}
 	fe, err := ix.FileByPath(xmlPath)
 	if err != nil || fe == nil || !fe.Downloadable() {
 		return nil // no game list: titles come from the ROM names

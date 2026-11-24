@@ -282,7 +282,7 @@ type Manager struct {
 	kick         chan struct{}
 	paused       atomic.Bool
 	throttle     atomic.Pointer[Throttle]
-	compress     compressRun // compressing idle indexes in the cache (compress.go)
+	tidy         tidyRun // upkeep of the index cache (compress.go)
 }
 
 // NewManager opens the data folder (locking it), imports the previous version's files
@@ -318,12 +318,11 @@ func NewManager(dataDir string, start bool) (*Manager, error) {
 		m.jobs[j.ID] = j
 		m.order = append(m.order, j.ID)
 	}
-	m.sweepIndexCache()
 	m.applyThrottle()
 	if start {
 		go m.governor()
 		go m.scheduler()
-		m.CompressIdleIndexes()
+		m.TidyIndexCache() // convert, cut down, zip and compress what nothing is using
 	}
 	return m, nil
 }
@@ -400,10 +399,7 @@ func AccountFrom(a AccountSetting) *nntp.Account {
 		Password: a.Password, Connections: max(1, a.Connections), Priority: max(0, a.Priority)}
 }
 
-// ---- index cache ----
-
-const indexCacheDays = 3
-const indexCacheBytes = int64(20) << 30
+// ---- index cache (upkeep in compress.go) ----
 
 func (m *Manager) PinIndex(path string) {
 	m.mu.Lock()
@@ -422,79 +418,14 @@ func (m *Manager) UnpinIndex(path string) {
 	m.mu.Unlock()
 }
 
+// dropIndex: the job is done with its index. It stays in the cache (browsing the share, or
+// downloading more of it, reuses it), which keeps the most recently used within its limit.
 func (m *Manager) dropIndex(j *Job) {
-	p := j.IndexFile
+	if j.IndexFile == "" {
+		return
+	}
 	j.IndexFile = ""
-	if p == "" {
-		return
-	}
-	m.mu.Lock()
-	inUse := m.pinned[strings.ToLower(p)] > 0
-	for _, o := range m.jobs {
-		if o.IndexFile == p {
-			inUse = true
-		}
-	}
-	m.mu.Unlock()
-	if !inUse {
-		if os.Remove(p) == nil {
-			m.Log("removed share index " + filepath.Base(p))
-		}
-	}
-}
-
-// sweepIndexCache: delete leftovers of interrupted builds; keep the index of every job
-// that can still resume, and recently browsed shares' indexes within the cache limits.
-func (m *Manager) sweepIndexCache() {
-	dir := m.IndexDir()
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	keep := map[string]bool{}
-	for _, j := range m.jobs {
-		if j.IndexFile != "" {
-			keep[strings.ToLower(j.IndexFile)] = true
-		}
-	}
-	type cached struct {
-		mtime time.Time
-		size  int64
-		path  string
-	}
-	var list []cached
-	for _, e := range ents {
-		p := filepath.Join(dir, e.Name())
-		if strings.Contains(e.Name(), ".usnindex.") {
-			_ = os.Remove(p)
-			continue
-		}
-		if !strings.HasSuffix(e.Name(), ".usnindex") || keep[strings.ToLower(p)] {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if time.Since(info.ModTime()) > indexCacheDays*24*time.Hour {
-			_ = os.Remove(p)
-			continue
-		}
-		list = append(list, cached{info.ModTime(), info.Size(), p})
-	}
-	var total int64
-	for _, c := range list {
-		total += c.size
-	}
-	sort.Slice(list, func(i, k int) bool { return list[i].mtime.Before(list[k].mtime) })
-	for _, c := range list {
-		if total <= indexCacheBytes {
-			break
-		}
-		if os.Remove(c.path) == nil {
-			total -= c.size
-		}
-	}
+	m.TidyIndexCache()
 }
 
 // ---- queue operations ----

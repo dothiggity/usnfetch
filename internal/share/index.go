@@ -16,20 +16,78 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SchemaVersion of the index file. Version 2 is shared with the Python implementation,
-// so indexes either one built are reused by the other.
-const SchemaVersion = 2
+// SchemaVersion of the index file. Version 3 keeps only what is read after the build (the
+// packed files' member list and the lookups that link them live in a scratch file during the
+// build), stores file ids and SHA-256s as bytes when they are hex, and stores a file's
+// segments as start/stride/count whenever they are evenly numbered. Version 2 files (the
+// Python era's, and earlier builds of this one) are converted on disk: see Convert.
+const SchemaVersion = 3
 
+// file_id and sha256 have no declared type: bytes when the share gives lowercase hex (half
+// the size), the text as given otherwise (see compactHex / hexText).
 const ddl = `
 CREATE TABLE meta(k TEXT PRIMARY KEY, v);
 CREATE TABLE pool(idx INTEGER PRIMARY KEY, msgid TEXT, nonce BLOB, tag BLOB, size INTEGER, ref INTEGER);
-CREATE TABLE files(fid INTEGER PRIMARY KEY, file_id TEXT, path TEXT, size INTEGER, sha256 TEXT,
+CREATE TABLE files(fid INTEGER PRIMARY KEY, file_id, path TEXT, size INTEGER, sha256,
                    start INTEGER, stride INTEGER, count INTEGER, layout INTEGER, pid INTEGER);
 CREATE TABLE file_segs(fid INTEGER, seg INTEGER, idx INTEGER, PRIMARY KEY(fid, seg)) WITHOUT ROWID;
 CREATE TABLE file_offs(fid INTEGER, seg INTEGER, idx INTEGER, off INTEGER, size INTEGER, PRIMARY KEY(fid, seg)) WITHOUT ROWID;
 CREATE TABLE packs(pid INTEGER PRIMARY KEY, pool_idx INTEGER, nonce BLOB, tag BLOB, size INTEGER);
-CREATE TABLE pack_files(file_id TEXT PRIMARY KEY, pid INTEGER, path TEXT, size INTEGER, sha256 TEXT) WITHOUT ROWID;
 `
+
+// scratchDDL: the build's working table, in a file of its own that is deleted afterwards.
+const scratchDDL = `CREATE TABLE scratch.pack_files(file_id, pid INTEGER, path TEXT, size INTEGER, sha256);`
+
+// compactHex: lowercase hex as its bytes (exactly reversible by hexText), anything else as is.
+func compactHex(s string) any {
+	if s == "" {
+		return nil
+	}
+	if len(s)%2 != 0 {
+		return s
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return s
+		}
+	}
+	v, _ := hex.DecodeString(s)
+	return v
+}
+
+// hexText reads a column written by compactHex back as the original text.
+func hexText(v any) string {
+	switch x := v.(type) {
+	case []byte:
+		return hex.EncodeToString(x)
+	case string:
+		return x
+	}
+	return ""
+}
+
+// progression: segments evenly numbered (start, start+stride, ...), stride >= 1.
+func progression(segs []int64) (start, stride int64, ok bool) {
+	if len(segs) == 0 {
+		return 0, 0, false
+	}
+	if len(segs) == 1 {
+		return segs[0], 1, true
+	}
+	stride = segs[1] - segs[0]
+	if stride < 1 {
+		return 0, 0, false
+	}
+	for i := 2; i < len(segs); i++ {
+		if segs[i]-segs[i-1] != stride {
+			return 0, 0, false
+		}
+	}
+	return segs[0], stride, true
+}
+
+// quoteSQL: a string literal for SQL text (file paths in ATTACH).
+func quoteSQL(v string) string { return "'" + strings.ReplaceAll(v, "'", "''") + "'" }
 
 func sqliteURI(path string, params string) string {
 	abs, _ := filepath.Abs(path)
@@ -44,7 +102,7 @@ func sqliteURI(path string, params string) string {
 // Builder writes a new index into <path>.<pid>-<n>.tmp and moves it into place only
 // when complete, so an index file that exists is a whole one.
 type Builder struct {
-	final, path              string
+	final, path, scratch     string
 	db                       *sql.DB
 	tx                       *sql.Tx
 	nPool, nFiles, nPacks    int64
@@ -76,17 +134,23 @@ func NewBuilder(path string) (*Builder, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(strings.Replace(ddl, "CREATE TABLE pack_files(file_id TEXT PRIMARY KEY, pid INTEGER, path TEXT, size INTEGER, sha256 TEXT) WITHOUT ROWID;",
-		"CREATE TABLE pack_files(file_id TEXT, pid INTEGER, path TEXT, size INTEGER, sha256 TEXT);", 1)); err != nil {
-		db.Close()
-		return nil, err
+	scratch := tmp + ".scratch"
+	_ = os.Remove(scratch)
+	for _, q := range []string{ddl, "ATTACH DATABASE " + quoteSQL(scratch) + " AS scratch",
+		"PRAGMA scratch.journal_mode=OFF", "PRAGMA scratch.synchronous=OFF", scratchDDL} {
+		if _, err := db.Exec(q); err != nil {
+			db.Close()
+			_ = os.Remove(tmp)
+			_ = os.Remove(scratch)
+			return nil, err
+		}
 	}
 	tx, err := db.Begin()
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &Builder{final: path, path: tmp, db: db, tx: tx}, nil
+	return &Builder{final: path, path: tmp, scratch: scratch, db: db, tx: tx}, nil
 }
 
 const rowsPerStmt = 400
@@ -134,7 +198,7 @@ func (b *Builder) flush() error {
 		buf  *[]any
 		verb string
 	}{{"pool", 6, &b.poolBuf, "INSERT OR REPLACE"}, {"files", 10, &b.fileBuf, "INSERT"}, {"file_segs", 3, &b.segBuf, "INSERT"},
-		{"packs", 5, &b.packBuf, "INSERT"}, {"pack_files", 5, &b.memberBuf, "INSERT"}} {
+		{"packs", 5, &b.packBuf, "INSERT"}, {"scratch.pack_files", 5, &b.memberBuf, "INSERT"}} {
 		if err := b.flushRows(f.t, f.c, f.buf, f.verb); err != nil {
 			return err
 		}
@@ -188,12 +252,12 @@ func (b *Builder) ApplyDoc(d *Doc, base int64) error {
 	inDoc := map[string]bool{}
 	for _, f := range d.Files {
 		b.nFiles++
-		var hash any
-		if f.Hash != "" {
-			hash = f.Hash
-		}
+		fileID, hash := compactHex(f.FileID), compactHex(f.Hash)
 		if f.SegRange != nil {
-			b.fileBuf = append(b.fileBuf, b.nFiles, f.FileID, f.Path, f.Size, hash, f.SegRange[0]+base, max(f.SegRange[1], 1), f.SegRange[2], nil, nil)
+			b.fileBuf = append(b.fileBuf, b.nFiles, fileID, f.Path, f.Size, hash, f.SegRange[0]+base, max(f.SegRange[1], 1), f.SegRange[2], nil, nil)
+		} else if start, stride, ok := progression(f.Segments); ok {
+			// listed one by one but evenly numbered (the usual case): three numbers, no rows
+			b.fileBuf = append(b.fileBuf, b.nFiles, fileID, f.Path, f.Size, hash, start+base, stride, int64(len(f.Segments)), nil, nil)
 		} else {
 			var pid any
 			if len(f.Segments) == 0 {
@@ -204,7 +268,7 @@ func (b *Builder) ApplyDoc(d *Doc, base int64) error {
 					b.unlinked = true // its pack may come in a later batch
 				}
 			}
-			b.fileBuf = append(b.fileBuf, b.nFiles, f.FileID, f.Path, f.Size, hash, nil, nil, int64(len(f.Segments)), nil, pid)
+			b.fileBuf = append(b.fileBuf, b.nFiles, fileID, f.Path, f.Size, hash, nil, nil, int64(len(f.Segments)), nil, pid)
 			for j, idx := range f.Segments {
 				b.segBuf = append(b.segBuf, b.nFiles, int64(j), idx+base)
 				// one file can list millions of segments (an 8 TB disk image: 11.4 million);
@@ -231,12 +295,9 @@ func (b *Builder) ApplyDoc(d *Doc, base int64) error {
 			}
 			var path, size, hash any
 			if m.HasMeta {
-				path, size = m.Path, m.Size
-				if m.Hash != "" {
-					hash = m.Hash
-				}
+				path, size, hash = m.Path, m.Size, compactHex(m.Hash)
 			}
-			b.memberBuf = append(b.memberBuf, m.FileID, b.nPacks, path, size, hash)
+			b.memberBuf = append(b.memberBuf, compactHex(m.FileID), b.nPacks, path, size, hash)
 		}
 	}
 	return b.maybeFlush()
@@ -250,13 +311,16 @@ func (b *Builder) Finish(meta map[string]any) (string, error) {
 	}
 	stmts := []string{"CREATE INDEX pool_ref ON pool(ref) WHERE ref IS NOT NULL"}
 	if b.nPacks > 0 && b.unlinked {
+		// the lookups that link packed files to their packs are built in the scratch file, so
+		// the index never holds them (they took a third of a big share's index)
 		stmts = append(stmts,
-			"CREATE INDEX pack_files_id ON pack_files(file_id)",
-			"CREATE INDEX files_file_id ON files(file_id)",
-			"UPDATE files SET pid = (SELECT pid FROM pack_files pf WHERE pf.file_id = files.file_id) WHERE pid IS NULL AND count = 0 AND start IS NULL",
-			`INSERT INTO files (file_id, path, size, sha256, start, stride, count, layout, pid)
-			 SELECT pf.file_id, pf.path, COALESCE(pf.size, 0), pf.sha256, NULL, NULL, 0, NULL, pf.pid FROM pack_files pf
-			 WHERE pf.path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM files f WHERE f.file_id = pf.file_id)`)
+			"CREATE INDEX scratch.pack_files_id ON pack_files(file_id)",
+			"CREATE TABLE scratch.file_ids(file_id PRIMARY KEY) WITHOUT ROWID",
+			"INSERT OR IGNORE INTO scratch.file_ids SELECT file_id FROM main.files WHERE file_id IS NOT NULL",
+			"UPDATE main.files SET pid = (SELECT pid FROM scratch.pack_files pf WHERE pf.file_id = files.file_id) WHERE pid IS NULL AND count = 0 AND start IS NULL",
+			`INSERT INTO main.files (file_id, path, size, sha256, start, stride, count, layout, pid)
+			 SELECT pf.file_id, pf.path, COALESCE(pf.size, 0), pf.sha256, NULL, NULL, 0, NULL, pf.pid FROM scratch.pack_files pf
+			 WHERE pf.path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM scratch.file_ids x WHERE x.file_id = pf.file_id)`)
 	}
 	for _, s := range stmts {
 		if _, err := b.tx.Exec(s); err != nil {
@@ -272,7 +336,7 @@ func (b *Builder) Finish(meta map[string]any) (string, error) {
 		b.segSize = 700000
 	}
 	m := map[string]any{"schema": SchemaVersion, "segment_size": b.segSize, "pool_count": b.nPool, "file_count": b.nFiles,
-		"pack_count": b.nPacks, "built": float64(time.Now().UnixNano()) / 1e9, "complete": 1}
+		"pack_count": b.nPacks, "built": float64(time.Now().UnixNano()) / 1e9, "complete": 1, "pool": 1}
 	for k, v := range meta {
 		m[k] = v
 	}
@@ -289,7 +353,9 @@ func (b *Builder) Finish(meta map[string]any) (string, error) {
 		b.Abort()
 		return "", err
 	}
+	_, _ = b.db.Exec("DETACH DATABASE scratch")
 	b.db.Close()
+	_ = os.Remove(b.scratch)
 	if err := os.Rename(b.path, b.final); err != nil {
 		_ = os.Remove(b.final)
 		if err2 := os.Rename(b.path, b.final); err2 != nil {
@@ -310,6 +376,7 @@ func (b *Builder) Abort() {
 	}
 	b.db.Close()
 	_ = os.Remove(b.path)
+	_ = os.Remove(b.scratch)
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +418,7 @@ type Index struct {
 	SegmentSize int64
 	PoolCount   int64
 	FileCount   int64
+	HasPool     bool           // the per-article data is here (false: the file list only, see cache.go)
 	Info        map[string]any // manifest facts (set by LoadShare)
 	rw          *sql.DB        // writes and anything that changes after open
 	ro          *sql.DB        // immutable read-only connections for the hot path
@@ -362,7 +430,7 @@ type Index struct {
 
 var errIndex = errors.New("index file is incomplete or from another version")
 
-// OpenIndex opens an index file built by this program or the Python one.
+// OpenIndex opens a complete index file of this schema (a full index or a file list).
 func OpenIndex(path string, key []byte) (*Index, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
@@ -396,7 +464,9 @@ func OpenIndex(path string, key []byte) (*Index, error) {
 	}
 	ro.SetMaxOpenConns(64)
 	ro.SetMaxIdleConns(64)
-	ix := &Index{Path: path, Key: key, rw: rw, ro: ro, Info: map[string]any{}}
+	_, hasPool := meta["pool"]
+	ix := &Index{Path: path, Key: key, rw: rw, ro: ro, Info: map[string]any{}, HasPool: !hasPool || num(meta["pool"]) != 0}
+	markOpen(path, 1)
 	ix.SegmentSize = num(meta["segment_size"])
 	if ix.SegmentSize == 0 {
 		ix.SegmentSize = 700000
@@ -421,18 +491,20 @@ func (ix *Index) Close() {
 	}
 	ix.ro.Close()
 	ix.rw.Close()
+	markOpen(ix.Path, -1)
 }
 
 const fileCols = "fid, file_id, path, size, sha256, start, stride, count, pid"
 
 func scanFile(sc interface{ Scan(...any) error }) (FileEntry, error) {
 	var f FileEntry
-	var fileID, path, sha sql.NullString
+	var fileID, sha any
+	var path sql.NullString
 	var size, start, stride, count, pid sql.NullInt64
 	if err := sc.Scan(&f.FID, &fileID, &path, &size, &sha, &start, &stride, &count, &pid); err != nil {
 		return f, err
 	}
-	f.FileID, f.Path, f.Size, f.SHA256, f.SegCount = fileID.String, path.String, size.Int64, sha.String, count.Int64
+	f.FileID, f.Path, f.Size, f.SHA256, f.SegCount = hexText(fileID), path.String, size.Int64, hexText(sha), count.Int64
 	if start.Valid {
 		st := stride.Int64
 		if st == 0 {
@@ -526,6 +598,9 @@ type Plan struct {
 }
 
 func (ix *Index) Plan(fe FileEntry) (*Plan, error) {
+	if !ix.HasPool {
+		return nil, ErrNoDownloadData
+	}
 	var layout sql.NullInt64
 	if err := ix.rw.QueryRow("SELECT layout FROM files WHERE fid = ?", fe.FID).Scan(&layout); err != nil {
 		return nil, err
@@ -678,6 +753,9 @@ func (ix *Index) poolSegment(idx int64) (Segment, error) {
 // PackSegment: the article holding packed segment pid (nonce/tag from the pack entry,
 // falling back to the pool entry; the publisher writes both from one record).
 func (ix *Index) PackSegment(pid int64) (Segment, error) {
+	if !ix.HasPool {
+		return Segment{}, ErrNoDownloadData
+	}
 	var idx int64
 	var nonce, tag []byte
 	var size sql.NullInt64
@@ -702,6 +780,9 @@ func (ix *Index) PackSegment(pid int64) (Segment, error) {
 }
 
 func (ix *Index) PackIDs() ([]int64, error) {
+	if !ix.HasPool {
+		return nil, ErrNoDownloadData
+	}
 	rows, err := ix.ro.Query("SELECT pid FROM packs ORDER BY pid")
 	if err != nil {
 		return nil, err

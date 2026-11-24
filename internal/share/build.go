@@ -507,7 +507,8 @@ type LoadOpts struct {
 	Password string
 	IndexDir string
 	Log      func(string)
-	Conns    int // connections for fetching the index (default min(16, account connections))
+	Conns    int  // connections for fetching the index (default min(16, account connections))
+	ListOK   bool // browsing: a saved file list will do (downloads, streaming and checks need the full index)
 }
 
 // IndexPath: the cache file for one manifest (a re-published share gets a new one).
@@ -605,9 +606,11 @@ func loadVia(link *Link, a *nntp.Account, o LoadOpts, logf func(string, ...any))
 		dir = "index_cache"
 	}
 	path := IndexPath(dir, link.FolderID, raw)
-	if Usable(path) {
-		logf("core index: cached in %s", filepath.Base(path))
-	} else {
+	ix, err := openCached(path, o.ListOK, key, logf)
+	if err != nil {
+		return nil, err
+	}
+	if ix == nil { // nothing usable saved: fetch the index
 		conns := o.Conns
 		if conns <= 0 {
 			conns = min(16, max(1, a.Connections))
@@ -617,20 +620,66 @@ func loadVia(link *Link, a *nntp.Account, o LoadOpts, logf func(string, ...any))
 			return nil, err
 		}
 		logf("core index: indexed in %.1fs -> %s", time.Since(t0).Seconds(), filepath.Base(path))
+		CacheMu.Lock()
+		ix, err = OpenIndex(path, key)
+		CacheMu.Unlock()
+		if err != nil {
+			return nil, err
+		}
 	}
-	ix, err := OpenIndex(path, key)
-	if err != nil {
-		return nil, err
-	}
+	path = ix.Path
 	ix.Info = map[string]any{
 		"format": m.Str("format"), "version": m["version"], "access": m.AccessMode(), "created_at": m.Str("created_at"),
 		"share_id": m.Str("share_id"), "folder_id": link.FolderID, "newsgroup": link.Newsgroup,
 		"owner_fingerprint": strings.ToLower(firstNonEmpty(m.Str("owner_key_fingerprint"), link.OwnerFP)),
 		"signature":         sig, "segment_size": ix.SegmentSize, "pool_count": ix.PoolCount,
 	}
-	_ = os.Chtimes(path, time.Now(), time.Now()) // "recently used": the cache sweep keeps it a few days
-	logf("core index: %d pool entries, %d files, segment_size=%d", ix.PoolCount, ix.FileCount, ix.SegmentSize)
+	_ = os.Chtimes(path, time.Now(), time.Now()) // last used: the cache keeps the most recently used
+	if ix.HasPool {
+		logf("core index: %d pool entries, %d files, segment_size=%d", ix.PoolCount, ix.FileCount, ix.SegmentSize)
+	}
 	return ix, nil
+}
+
+// openCached opens what the cache has for this index: the full index (an older-format one is
+// converted first, on disk), or, when a file list will do, the saved file list (unzipped
+// first if it is zipped). nil, nil: nothing usable, fetch the index.
+func openCached(path string, listOK bool, key []byte, logf func(string, ...any)) (*Index, error) {
+	CacheMu.Lock()
+	defer CacheMu.Unlock()
+	if sch, _ := FileInfo(path); sch == 2 {
+		t0 := time.Now()
+		logf("core index: converting the saved index to the smaller format (once)")
+		if err := Convert(path); err != nil {
+			logf("core index: could not convert it (%v); fetching it again", err)
+		} else {
+			logf("core index: converted in %.1fs", time.Since(t0).Seconds())
+		}
+	}
+	if sch, pool := FileInfo(path); sch == SchemaVersion && pool {
+		logf("core index: cached in %s", filepath.Base(path))
+		return OpenIndex(path, key)
+	}
+	if !listOK {
+		return nil, nil
+	}
+	list := ListPath(path)
+	if _, err := os.Stat(list); err != nil {
+		if _, err := os.Stat(list + GzExt); err != nil {
+			return nil, nil
+		}
+		t0 := time.Now()
+		if err := GunzipFile(list); err != nil {
+			logf("core index: could not unzip the saved file list (%v); fetching the index", err)
+			return nil, nil
+		}
+		logf("core index: unzipped the saved file list in %.1fs", time.Since(t0).Seconds())
+	}
+	if sch, _ := FileInfo(list); sch != SchemaVersion {
+		return nil, nil
+	}
+	logf("core index: opened the saved file list (%s): downloading, previews and checks fetch the rest of the index", filepath.Base(list))
+	return OpenIndex(list, key)
 }
 
 // checkOwnerPin: for any manifest that names an owner key, the link's pin must match it.

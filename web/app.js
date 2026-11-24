@@ -972,6 +972,30 @@ async function renderShare(s, path) {
 
   // ---- the share in one line; the rest under Details
   let detailsOpen = store.get("sharedetails", false);
+  // opened from the saved file list: browsing works; the rest of the index is fetched for
+  // previews, box art not seen yet and checks (by itself when one is asked for, or now)
+  async function fetchNow() {
+    try { s = await api(`/shares/${sid}/fetch`, { body: {} }); } catch (e) { fail(e); return; }
+    renderSummary(); watchFetch();
+  }
+  let fetchWatch = null;
+  function watchFetch() {
+    if (fetchWatch) return;
+    fetchWatch = setInterval(async () => {
+      try { s = await api("/shares/" + sid); } catch { clearInterval(fetchWatch); fetchWatch = null; return; }
+      renderSummary();
+      if (s.fetching) return;
+      clearInterval(fetchWatch); fetchWatch = null;
+      if (!s.list_only) {
+        toast("Ready: previews, box art and checks work now", "ok");
+        load();
+        if (s.checking) runCheck(0).catch(() => {});
+      }
+    }, 1500);
+    page.stop.push(() => { if (fetchWatch) clearInterval(fetchWatch); fetchWatch = null; });
+  }
+  const fetching = (e) => { if (e && e.code === "fetching_index") { s.fetching = true; renderSummary(); watchFetch(); return true; } return false; };
+
   function renderSummary() {
     const ck = s.check;
     const fp = (info.owner_fingerprint || "").slice(0, 16);
@@ -979,7 +1003,12 @@ async function renderShare(s, path) {
       : ck && ck.verdict ? h("span", { title: ck.checked_at ? `${ck.sampled} articles sampled · ${ago(ck.checked_at)}` : "" }, healthChip(ck))
       : h("span", { class: "faint" }, "availability not checked");
     const fact = (k, v, sub) => h("div", { class: "card" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v), sub ? h("div", { class: "s" }, sub) : null);
-    put(summary, h("div", { class: "sum-line" },
+    const listNote = s.fetching ? h("div", { class: "note" }, h("span", { class: "spin" }), " Fetching the rest of this share's index (what previews, box art and checks need). Browsing works meanwhile; big shares take a minute or two.")
+      : s.list_only ? h("div", { class: "note" + (s.fetch_error ? " bad" : "") },
+        s.fetch_error ? `Couldn't fetch the rest of the index: ${s.fetch_error}. ` : "Opened from the saved file list, so browsing is instant. Previews, box art you haven't seen yet and checks need the rest of the index. ",
+        h("button", { class: "btn sm", onclick: fetchNow }, icon("download"), s.fetch_error ? "Try again" : "Fetch it now"))
+      : null;
+    put(summary, listNote, h("div", { class: "sum-line" },
       h("b", {}, fmtBytes(info.size)), cat && cat.listed ? h("span", { class: "faint" }, `(listed as ${cat.listed})`) : null,
       h("span", {}, `${(info.files || 0).toLocaleString()} files`), avail, h("span", { class: "grow" }),
       h("button", { class: "btn sm ghost", "aria-expanded": detailsOpen ? "true" : "false", onclick: () => { detailsOpen = !detailsOpen; store.set("sharedetails", detailsOpen); renderSummary(); } }, icon("info"), detailsOpen ? "Hide details" : "Details")),
@@ -999,7 +1028,7 @@ async function renderShare(s, path) {
   async function runCheck(sample) {
     if (sample) {
       try { s = await api(`/shares/${sid}/check`, { body: { sample } }); renderSummary(); }
-      catch (e) { fail(e); return; }
+      catch (e) { if (!fetching(e)) fail(e); else toast("Fetching the rest of the index first: the check can run once it's here"); return; }
     }
     const t = setInterval(async () => {
       try { s = await api("/shares/" + sid); } catch { clearInterval(t); return; }
@@ -1075,7 +1104,19 @@ async function renderShare(s, path) {
 
   // ---- rows
   const fileUrl = (f, dl) => `/api/shares/${sid}/file/${f.fid}${dl ? "?download=1" : ""}`;
+  // a link that streams a file: on a share opened from its file list, fetch the rest of the index first
+  function needIndex(ev) {
+    if (!s.list_only) return;
+    ev.preventDefault();
+    if (!s.fetching) fetchNow();
+    toast("Fetching the rest of this share's index first; this works once it's here");
+  }
   async function preview(f) {
+    if (s.list_only && !f.mime.startsWith("image/")) {   // pictures may be in the art cache
+      if (!s.fetching) fetchNow();
+      toast("Fetching the rest of this share's index first; the preview works once it's here");
+      return;
+    }
     const url = fileUrl(f);
     let body;
     if (f.mime.startsWith("video/")) body = h("video", { src: url, controls: true, autoplay: true });
@@ -1119,8 +1160,8 @@ async function renderShare(s, path) {
       h("td", { class: "nowrap" }, localChip(f) || (f.size === 0 ? h("span", { class: "chip" }, "empty") : null)),
       h("td", { class: "act" },
         previewable(f) ? h("button", { class: "btn ghost icon", title: "Preview (streamed from Usenet)", onclick: () => preview(f) }, icon("eye")) : null,
-        h("a", { class: "btn ghost icon", title: "Open in a new tab, straight from Usenet", href: fileUrl(f), target: "_blank" }, icon("ext")),
-        h("a", { class: "btn ghost icon", title: "Save to this computer through the browser (not the download folder)", href: fileUrl(f, true) }, icon("save"))));
+        h("a", { class: "btn ghost icon", title: "Open in a new tab, straight from Usenet", href: fileUrl(f), target: "_blank", onclick: needIndex }, icon("ext")),
+        h("a", { class: "btn ghost icon", title: "Save to this computer through the browser (not the download folder)", href: fileUrl(f, true), onclick: needIndex }, icon("save"))));
   }
 
   // ---- folder listing: one folder at a time, its files in pages of PAGE
@@ -1274,6 +1315,7 @@ async function renderShare(s, path) {
 
   renderSummary(); refreshSel(); await load();
   if (s.checking) runCheck(0).catch(() => {});
+  if (s.fetching) watchFetch();
 }
 
 // ---------------------------------------------------------------- activity
@@ -1717,6 +1759,7 @@ async function pageSettings() {
     missing_retries: h("input", { class: "input", type: "number", min: 0, max: 10, value: s.missing_retries, style: { width: "110px" } }),
     max_parallel_jobs: h("input", { class: "input", type: "number", min: 1, max: 8, value: s.max_parallel_jobs, style: { width: "110px" } }),
     stream_connections: h("input", { class: "input", type: "number", min: 1, max: 64, value: s.stream_connections, style: { width: "110px" } }),
+    index_cache_gb: h("input", { class: "input", type: "number", min: 0, max: 10000, value: s.index_cache_gb ?? 20, style: { width: "110px" } }),
     index_dir: h("input", { class: "input", value: s.index_dir || "", placeholder: "empty: index_cache in the data folder" }),
     sevenzip_path: h("input", { class: "input", value: s.sevenzip_path || "", placeholder: "empty: found by itself" }), unrar_path: h("input", { class: "input", value: s.unrar_path || "", placeholder: "empty: found by itself" }) };
   const sws = { verify: sw(s.verify), extract: sw(s.extract), delete_archives: sw(s.delete_archives), extract_standalone: sw(s.extract_standalone) };
@@ -1741,10 +1784,11 @@ async function pageSettings() {
       h("div", { class: "form" },
         ...field("Missing-article retries", d.missing_retries, "Retry passes (1, 2, 3… minutes apart) for articles missing on every account."),
         ...field("Streaming connections", d.stream_connections, "Used when opening files straight from Usenet in the browser, on top of download connections."),
-        h("label", { class: "k" }, "Share index folder"), h("div", { class: "inline nowrap-row" }, d.index_dir, browseBtn(d.index_dir)), h("div", { class: "help" }, "About 200 MB per TB of share while a share is open or a job can resume."),
+        h("label", { class: "k" }, "Share index folder"), h("div", { class: "inline nowrap-row" }, d.index_dir, browseBtn(d.index_dir)), h("div", { class: "help" }, "Where each share's index is kept once opened. Shares don't change, so nothing here expires by age."),
+        ...field("Full indexes, up to (GB)", d.index_cache_gb, "Downloads, previews and checks use a share's full index (about 100 MB per TB of share). Past this much, the ones used least recently are cut down to their file list, which is zipped and kept, so browsing stays instant; the rest is fetched again when needed. 0 keeps only file lists for shares not in use."),
         h("label", { class: "k" }, "7-Zip"), d.sevenzip_path, tools.sevenzip_path,
         h("label", { class: "k" }, "UnRAR"), d.unrar_path, tools.unrar_path)));
-  const nums = new Set(["missing_retries", "max_parallel_jobs", "stream_connections"]);
+  const nums = new Set(["missing_retries", "max_parallel_jobs", "stream_connections", "index_cache_gb"]);
   for (const [k, el] of Object.entries(d)) el.addEventListener("change", async () => {
     if (await saveOn(downloads, { [k]: nums.has(k) ? +el.value : el.value })) {
       if (k === "categories") el.value = (s.categories || []).join(", ");
@@ -1866,9 +1910,9 @@ async function pageSystem() {
         h("div", { class: "card", title: "Go: usnfetch's own data. SQLite & other: the share indexes' working memory and the rest." },
           h("div", { class: "k" }, "Memory"), h("div", { class: "v" }, mem && mem.private ? fmtBytes(mem.private) : "—"),
           h("div", { class: "s" }, mem && mem.private ? `Go ${fmtBytes(mem.go_heap_in_use)} · SQLite & other ${fmtBytes(mem.other || 0)}` : "")),
-        ic ? h("div", { class: "card", title: ic.path + (ic.compresses ? "\nIndexes nothing has open are compressed (Windows file compression); they read as before." : "") },
-          h("div", { class: "k" }, "Share index cache"), h("div", { class: "v" }, fmtBytes(ic.on_disk)),
-          h("div", { class: "s" }, `${ic.files} share${ic.files === 1 ? "" : "s"}` + (ic.on_disk < ic.size * 0.95 ? ` · ${fmtBytes(ic.size)} before compression` : ""))) : null,
+        ic ? h("div", { class: "card", title: ic.path + "\nFull indexes: what downloads, previews and checks use, kept by last use up to the limit in Settings.\nFile lists: what browsing uses, zipped while idle." + (ic.art ? `\nBox art shown so far: ${ic.art} pictures.` : "") },
+          h("div", { class: "k" }, "Share index cache"), h("div", { class: "v" }, fmtBytes(ic.on_disk + (ic.art_disk || 0))),
+          h("div", { class: "s" }, `${ic.full} full (${fmtBytes(ic.full_disk)} of ${fmtBytes(ic.limit)}) · ${ic.lists} file list${ic.lists === 1 ? "" : "s"} (${fmtBytes(ic.lists_disk)})` + (ic.art ? ` · box art ${fmtBytes(ic.art_disk)}` : ""))) : null,
         h("div", { class: "card wide" }, h("div", { class: "k" }, "Accounts"), h("div", { class: "v", style: { fontSize: "14px", whiteSpace: "normal" } }, st.accounts || "none configured"), h("div", { class: "s", title: st.data_dir }, "data: " + st.data_dir)));
       const l = await api("/logs?after=" + seq);
       if (l.lines.length) {

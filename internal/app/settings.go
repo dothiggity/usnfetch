@@ -26,6 +26,7 @@ type Settings struct {
 	UnrarPath         string           `json:"unrar_path"`
 	CatalogCategory   string           `json:"catalog_category"`
 	IndexDir          string           `json:"index_dir"`
+	IndexCacheGB      int              `json:"index_cache_gb"` // full share indexes kept up to this (on disk); past it, only file lists
 	Accounts          []AccountSetting `json:"accounts"`
 	StreamConnections int              `json:"stream_connections"`
 	Web               WebSettings      `json:"web"`
@@ -81,6 +82,7 @@ func defaultSettings() Settings {
 		DeleteArchives:    true,
 		Accounts:          []AccountSetting{},
 		StreamConnections: 8,
+		IndexCacheGB:      20,
 		Web:               WebSettings{Host: "127.0.0.1", Port: 7979},
 	}
 }

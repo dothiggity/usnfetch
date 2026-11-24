@@ -131,10 +131,17 @@ carries on. `--data <folder>` puts it somewhere else.
 If you'd rather keep everything next to the program, say on a USB stick, create an empty file
 called `portable` in the same folder as `usnfetch.exe`.
 
-The share index cache takes roughly 200 MB per TB of share, and old entries are cleaned up on their
-own. On Windows, indexes that aren't in use are compressed with Windows' own file compression,
-which roughly halves them and doesn't slow browsing down. The System page shows how much space the
-cache takes.
+Each share you open leaves its index in the data folder, so opening it again is instant. Shares
+never change, so nothing there expires. A full index, the kind downloads, previews and checks
+need, is roughly 100 MB per TB of share. The ones you used most recently are kept up to a limit
+(20 GB unless you change it in Settings). Past that, the least recently used are cut down to just
+their file list, which is zipped while it isn't in use and is usually a few MB. Browsing those
+shares is still instant, and the rest of the index is fetched again the first time you preview,
+check or download something from them. Box art you've already looked at is kept too, so a gallery
+you've seen opens without going back to Usenet. On Windows the full indexes are also compressed by
+Windows itself while they're not in use, which roughly halves them again. The System page shows
+what all this takes.
+
 Provider passwords are encrypted with Windows' own data protection, so only your Windows account can
 read them.
 
