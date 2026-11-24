@@ -282,7 +282,11 @@ type Manager struct {
 	kick         chan struct{}
 	paused       atomic.Bool
 	throttle     atomic.Pointer[Throttle]
-	tidy         tidyRun // upkeep of the index cache (compress.go)
+	diskLow      atomic.Pointer[diskLow] // downloads paused for lack of space (throttle.go)
+	// Notify shows a notification on this machine (set in tray mode): a download finished or
+	// failed, the disk filled up. warn: the warning style.
+	Notify func(title, body string, warn bool)
+	tidy   tidyRun // upkeep of the index cache (compress.go)
 }
 
 // NewManager opens the data folder (locking it), imports the previous version's files
@@ -822,6 +826,14 @@ func (m *Manager) finish(j *Job, state, detail string) {
 	msg := fmt.Sprintf("%s: %s", j.Label(), state)
 	if detail != "" {
 		msg += " -- " + detail
+	}
+	if !deleted {
+		switch state {
+		case "completed":
+			m.notify("Download finished", j.Label(), false)
+		case "failed":
+			m.notify("Download failed", j.Label()+": "+detail, true)
+		}
 	}
 	msg += " (" + j.ID + ")"
 	m.Log(msg)

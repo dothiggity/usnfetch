@@ -27,6 +27,8 @@ type Settings struct {
 	CatalogCategory   string           `json:"catalog_category"`
 	IndexDir          string           `json:"index_dir"`
 	IndexCacheGB      int              `json:"index_cache_gb"` // full share indexes kept up to this (on disk); past it, only file lists
+	MinFreeGB         int              `json:"min_free_gb"`    // downloads pause when the download drive has less free than this (0 = never)
+	Notify            bool             `json:"notify"`         // Windows notifications (tray) when a download finishes or fails
 	Accounts          []AccountSetting `json:"accounts"`
 	StreamConnections int              `json:"stream_connections"`
 	Web               WebSettings      `json:"web"`
@@ -83,6 +85,8 @@ func defaultSettings() Settings {
 		Accounts:          []AccountSetting{},
 		StreamConnections: 8,
 		IndexCacheGB:      20,
+		MinFreeGB:         5,
+		Notify:            true,
 		Web:               WebSettings{Host: "127.0.0.1", Port: 7979},
 	}
 }

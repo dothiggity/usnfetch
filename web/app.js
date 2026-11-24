@@ -206,7 +206,7 @@ function healthChip(hl) {
 }
 
 // ---------------------------------------------------------------- shell
-const NAV = [["catalog", "Catalog", "catalog"], ["activity", "Activity", "activity"], ["settings", "Settings", "settings"], ["system", "System", "system"]];
+const NAV = [["catalog", "Catalog", "catalog"], ["search", "Search", "search"], ["activity", "Activity", "activity"], ["settings", "Settings", "settings"], ["system", "System", "system"]];
 let page = { stop: [] };
 function every(ms, fn) { fn(); const t = setInterval(fn, ms); page.stop.push(() => clearInterval(t)); }
 function setTitle(text, crumb, href) {
@@ -221,14 +221,29 @@ function buildNav(active) {
 }
 
 let lastStatus = null;
+let SESSION = {};          // /api/session: local (this browser runs on the usnfetch machine), tray_notify
 let seenFinished = null;   // the newest finish time already told about (null: not polled yet)
+
+// "Show in folder": open a download's folder in Explorer (only from the machine running usnfetch)
+const revealJob = (id) => api(`/jobs/${id}/reveal`, { body: {} }).catch(fail);
+
+// browser notifications: only when usnfetch can't notify from the Windows tray, and the page
+// is out of sight; they need a secure page (this machine, or https)
+const canBrowserNotify = () => window.isSecureContext && "Notification" in window;
+function browserNotify(title, body) {
+  if (SESSION.tray_notify || !document.hidden || !canBrowserNotify() || Notification.permission !== "granted" || !store.get("ui.notify", false)) return;
+  try {
+    const n = new Notification(title, { body, icon: "/static/icon-idle.png" });
+    n.onclick = () => { window.focus(); location.hash = "#/activity"; n.close(); };
+  } catch { /* not allowed here */ }
+}
 function announceFinished(s) {
   const recent = s.recent || [];
   const newest = recent.reduce((a, j) => Math.max(a, j.finished || 0), 0);
   if (seenFinished == null) { seenFinished = newest; return; }   // first look: old news
   for (const j of recent.filter((x) => x.finished > seenFinished).reverse()) {
-    if (j.state === "completed") toast(`Finished: ${jobLabel(j)}`, "ok", { label: "View", href: "#/activity" });
-    else if (j.state === "failed") toast(`Failed: ${jobLabel(j)}${j.detail ? " — " + j.detail : ""}`, "bad", { label: "View", href: "#/activity" });
+    if (j.state === "completed") { toast(`Finished: ${jobLabel(j)}`, "ok", { label: "View", href: "#/activity" }); browserNotify("Download finished", jobLabel(j)); }
+    else if (j.state === "failed") { toast(`Failed: ${jobLabel(j)}${j.detail ? " — " + j.detail : ""}`, "bad", { label: "View", href: "#/activity" }); browserNotify("Download failed", jobLabel(j) + (j.detail ? ": " + j.detail : "")); }
     if (page.onJobDone) page.onJobDone(j);
   }
   seenFinished = Math.max(seenFinished, newest);
@@ -288,13 +303,14 @@ function renderStatusBar(s, look) {
         icon("download"), h("b", {}, s.speed > 0 ? fmtRate(s.speed) : "0 B/s"), th.limit ? h("span", { class: "faint" }, " / " + fmtRate(th.limit)) : null),
       cur && waiting ? h("span", { class: "sb-queue" }, h("b", {}, waiting), " queued") : null,
       s.disk && s.disk.free != null ? h("span", { class: "sb-free", title: s.disk.path }, h("b", {}, fmtBytes(s.disk.free)), " free") : null),
-    h("button", { class: "btn sm " + (th.paused ? "primary" : "ghost"), title: th.paused ? "Resume downloads" : "Pause downloads",
-      onclick: (ev) => { ev.stopPropagation(); (th.paused ? resumeAll() : pausePrompt()).catch(fail); } }, icon(th.paused ? "play" : "pause"), h("span", { class: "sb-btxt" }, th.paused ? "Resume" : "Pause")));
+    th.disk ? h("span", { class: "chip warn", title: "Downloads carry on by themselves once there's room (Settings → Downloads)" }, "free up space")
+      : h("button", { class: "btn sm " + (th.paused ? "primary" : "ghost"), title: th.paused ? "Resume downloads" : "Pause downloads",
+        onclick: (ev) => { ev.stopPropagation(); (th.paused ? resumeAll() : pausePrompt()).catch(fail); } }, icon(th.paused ? "play" : "pause"), h("span", { class: "sb-btxt" }, th.paused ? "Resume" : "Pause")));
   bar.className = "statusbar " + look;
   document.title = cur && cur.state === "downloading" ? `${p.toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch` : th.paused ? "Paused — usnfetch" : "usnfetch";
 }
 
-const ROUTES = { catalog: pageCatalog, share: pageShare, activity: pageActivity, settings: pageSettings, system: pageSystem, login: pageLogin, setup: pageSetup };
+const ROUTES = { catalog: pageCatalog, search: pageSearch, share: pageShare, activity: pageActivity, settings: pageSettings, system: pageSystem, login: pageLogin, setup: pageSetup };
 async function route() {
   page.stop.forEach((f) => f()); page = { stop: [] };
   document.querySelectorAll(".popmenu").forEach((m) => m.remove());
@@ -569,7 +585,7 @@ async function pageCatalog() {
     const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
     let out = data.entries.filter((e) => (!f.source || e.source === f.source) && !(f.hide && done(e)) &&
       tagOk(launchers(e), f.launcher) && tagOk(devices(e), f.device) && seenOk(e) &&
-      words.every((w) => `${e.title} ${e.variant} ${e.listed} ${e.source} ${e.sku} ${e.name} ${(e.also || []).join(" ")} ${launchers(e).join(" ")} ${devices(e).join(" ")}`.toLowerCase().includes(w)));
+      words.every((w) => `${e.title} ${e.variant} ${e.listed} ${e.source} ${e.sku} ${e.name} ${(e.also || []).join(" ")} ${launchers(e).join(" ")} ${devices(e).join(" ")} ${(e.inside || []).map((x) => x.name).join(" ")}`.toLowerCase().includes(w)));
     const rank = (e) => (active(e) ? 3 : complete(e) ? 2 : e.got ? 1 : 0);
     const title = (a, b) => a.title.localeCompare(b.title);
     // grouped by the first launcher (A to Z) or device (in the device list's order); none named last
@@ -621,8 +637,9 @@ async function pageCatalog() {
     }
     if (j && ACTIVE.has(j.state)) return stateChip(j.state);
     if (j && j.state === "failed") return h("span", { title: j.detail || "" }, stateChip("failed"));   // the last try failed: say so first
-    if (g && g.complete) return h("span", { class: "chip ok", title: "Every file of this share has been downloaded" }, icon("check"), "downloaded");
-    if (g && g.files) return h("span", { class: "chip warn", title: "Some of this share has been downloaded" }, g.of ? `partial · ${g.files.toLocaleString()} of ${g.of.toLocaleString()} files` : `partial · ${g.files.toLocaleString()} files`);
+    const showBtn = j && SESSION.local ? h("button", { class: "btn xs ghost icon", title: "Show in folder", onclick: () => revealJob(j.id) }, icon("folder")) : null;
+    if (g && g.complete) return h("span", { class: "nowrap" }, h("span", { class: "chip ok", title: "Every file of this share has been downloaded" }, icon("check"), "downloaded"), showBtn);
+    if (g && g.files) return h("span", { class: "nowrap" }, h("span", { class: "chip warn", title: "Some of this share has been downloaded" }, g.of ? `partial · ${g.files.toLocaleString()} of ${g.of.toLocaleString()} files` : `partial · ${g.files.toLocaleString()} files`), showBtn);
     if (j) return h("span", { title: j.detail || "" }, stateChip(j.state));
     return h("span", { class: "faint" }, "—");
   }
@@ -669,7 +686,8 @@ async function pageCatalog() {
             launchers(e).map((t) => tagChip("launcher", t)), devices(e).map((t) => tagChip("device", t)),
             e.source ? h("span", { class: "chip plain" }, e.source) : null,
             e.sku ? h("span", { class: "faint mono" }, e.sku) : null,
-            e.info ? h("a", { href: e.info, target: "_blank", rel: "noopener", title: e.info }, icon("ext")) : null)),
+            e.info ? h("a", { href: e.info, target: "_blank", rel: "noopener", title: e.info }, icon("ext")) : null),
+          insideLine(e.inside)),
         h("td", { class: "right nowrap" }, sizeCell(e)),
         h("td", {}, openedCell(e)),
         h("td", {}, healthChip(e.health)),
@@ -728,6 +746,59 @@ async function pageCatalog() {
     act === "import" ? importDialog(load) : openLinkDialog();
   }
   every(4000, () => { if (!document.hidden && !$(".modal-back")) load().catch(() => {}); });
+}
+
+// insideLine: a build's systems and game counts, in a catalog row
+function insideLine(sys) {
+  if (!sys || !sys.length) return null;
+  const total = sys.reduce((a, x) => a + x.games, 0);
+  const top = sys.slice(0, 4).map((x) => `${x.name} ${x.games.toLocaleString()}`).join(" · ");
+  return h("div", { class: "t3", title: sys.map((x) => `${x.name}: ${x.games.toLocaleString()}`).join("\n") },
+    h("b", {}, `${total.toLocaleString()} games`), ` in ${sys.length} system${sys.length === 1 ? "" : "s"}: ${top}${sys.length > 4 ? ` · +${sys.length - 4} more` : ""}`);
+}
+
+// ---------------------------------------------------------------- search
+// Search inside every share opened before (their saved file lists): which builds have it.
+async function pageSearch() {
+  setTitle("Search");
+  const q = h("input", { class: "input", type: "search", placeholder: "Search inside every share you've opened: a game, a system, a BIOS…", value: store.get("search.q", "") });
+  const note = h("div", { class: "countline" });
+  const out = h("div", { class: "search-results" });
+  let timer = null, seq = 0;
+  const go = (sh, folder) => {
+    if (sh.link) store.set("link." + sh.id, sh.link);
+    location.hash = `#/share/${sh.id}` + (folder ? "/" + folder.split("/").map(encodeURIComponent).join("/") : "");
+  };
+  const card = (sh) => h("div", { class: "panel sr" },
+    h("div", { class: "head" }, icon("folder"), h("h2", {}, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go(sh, ""); } }, sh.title)), h("span", { class: "grow" }),
+      h("span", { class: "muted small" }, `${sh.files.toLocaleString()} file${sh.files === 1 ? "" : "s"}` + (sh.folders ? ` · ${sh.folders.toLocaleString()} folder${sh.folders === 1 ? "" : "s"}` : ""))),
+    h("div", { class: "body" }, sh.hits.map((x) => h("div", { class: "sr-hit" },
+      h("a", { href: "#", title: "Open the share here", onclick: (ev) => { ev.preventDefault(); go(sh, x.folder ? x.path : x.in); } }, icon(x.folder ? "folder" : "file"), h("span", {}, x.name)),
+      h("span", { class: "faint small mono path" }, x.folder ? x.path : x.in || "/"),
+      h("span", { class: "muted small right nowrap" }, x.folder ? `${(x.count || 0).toLocaleString()} files · ${fmtBytes(x.size)}` : fmtBytes(x.size)))),
+      sh.files + sh.folders > sh.hits.length ? h("div", { class: "faint small", style: { marginTop: "6px" } },
+        `…and ${(sh.files + sh.folders - sh.hits.length).toLocaleString()} more: `, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go(sh, ""); } }, "open the share"), " and search there for all of them.") : null));
+  async function run() {
+    const v = q.value.trim();
+    store.set("search.q", v);
+    const my = ++seq;
+    if ([...v].length < 2) { put(note, v ? "Type at least two letters." : "Finds files and folders in every share you've opened before. Shares you haven't opened aren't known yet."); put(out); return; }
+    put(note, h("span", { class: "spin" }), " Searching…");
+    let r;
+    try { r = await api("/search?q=" + encodeURIComponent(v)); }
+    catch (e) { if (my === seq) put(note, h("span", { class: "bad-text" }, cap(e.message))); return; }
+    if (my !== seq) return;
+    const files = r.shares.reduce((a, x) => a + x.files, 0);
+    put(note, r.shares.length ? `${files.toLocaleString()} file${files === 1 ? "" : "s"} in ${r.shares.length} of the ${r.searched} shares you've opened` : `Nothing matches in the ${r.searched} share${r.searched === 1 ? "" : "s"} you've opened.`,
+      h("span", { class: "faint" }, ` · ${(r.ms / 1000).toFixed(1)} s`), r.failed ? h("span", { class: "bad-text" }, ` · ${r.failed} couldn't be searched`) : null,
+      r.timed_out ? h("span", { class: "bad-text" }, " · stopped after a minute: some shares weren't searched") : null);
+    put(out, r.shares.map(card));
+  }
+  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 450); });
+  q.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { clearTimeout(timer); run(); } });
+  $("#view").append(h("div", { class: "search-page" }, h("div", { class: "search big" }, icon("search"), q), note, out));
+  q.focus();
+  run();
 }
 
 // ---------------------------------------------------------------- basket
@@ -1012,6 +1083,7 @@ async function renderShare(s, path) {
   }
   const fetching = (e) => { if (e && e.code === "fetching_index") { s.fetching = true; renderSummary(); watchFetch(); return true; } return false; };
 
+  let insideAll = false;   // every system shown, not just the first dozen
   function renderSummary() {
     const ck = s.check;
     const fp = (info.owner_fingerprint || "").slice(0, 16);
@@ -1024,10 +1096,16 @@ async function renderShare(s, path) {
         s.fetch_error ? `Couldn't fetch the rest of the index: ${s.fetch_error}. ` : "Opened from the saved file list, so browsing is instant. Previews, box art you haven't seen yet and checks need the rest of the index. ",
         h("button", { class: "btn sm", onclick: fetchNow }, icon("download"), s.fetch_error ? "Try again" : "Fetch it now"))
       : null;
+    const sys = info.inside || [];
+    const sysChips = sys.length ? h("div", { class: "inside-chips" }, h("span", { class: "faint small" }, `${sys.reduce((a, x) => a + x.games, 0).toLocaleString()} games:`),
+      (insideAll ? sys : sys.slice(0, 12)).map((x) => h("a", { class: "chip plain sys", title: `Open ${x.folder}`, href: `#/share/${sid}/${x.folder.split("/").map(encodeURIComponent).join("/")}` },
+        x.name, h("span", { class: "faint" }, " " + x.games.toLocaleString()))),
+      !insideAll && sys.length > 12 ? h("a", { class: "chip plain sys", href: "#", onclick: (ev) => { ev.preventDefault(); insideAll = true; renderSummary(); } }, `+${sys.length - 12} more`) : null) : null;
     put(summary, listNote, h("div", { class: "sum-line" },
       h("b", {}, fmtBytes(info.size)), cat && cat.listed ? h("span", { class: "faint" }, `(listed as ${cat.listed})`) : null,
       h("span", {}, `${(info.files || 0).toLocaleString()} files`), avail, h("span", { class: "grow" }),
       h("button", { class: "btn sm ghost", "aria-expanded": detailsOpen ? "true" : "false", onclick: () => { detailsOpen = !detailsOpen; store.set("sharedetails", detailsOpen); renderSummary(); } }, icon("info"), detailsOpen ? "Hide details" : "Details")),
+    sysChips,
     detailsOpen ? h("div", { class: "cards" },
       fact("Format", `v${info.version ?? "?"} · ${info.access || "?"}`, info.created_at ? `published ${new Date(info.created_at).toLocaleDateString()}` : ""),
       fact("Small files", (info.packed || 0).toLocaleString(), "packed several to an article"),
@@ -1439,6 +1517,7 @@ async function pageActivity() {
           j.state === "paused" ? h("button", { class: "btn sm", title: "Let this download carry on", onclick: act(() => api(`/jobs/${j.job_id}/resume`, { body: {} })) }, icon("play"), "Resume")
             : j.state !== "stopping" ? h("button", { class: "btn sm", title: "Hold this download in the queue; it carries on from where it was when resumed", onclick: act(() => api(`/jobs/${j.job_id}/pause`, { body: {} })) }, icon("pause"), "Pause") : null,
           h("button", { class: "btn sm ghost icon", title: "More", onclick: (ev) => menu(ev.currentTarget, [
+            SESSION.local && j.out_dir ? ["Show in folder", () => revealJob(j.job_id)] : null,
             ["Stop and move to History", act(() => api(`/jobs/${j.job_id}/stop`, { body: {} }))],
             ["Delete (files stay)", act(async () => { if (await confirmBox("Delete job", `Delete “${jobLabel(j)}”? Downloaded files stay on disk.`, "Delete", "danger solid")) await api(`/jobs/${j.job_id}`, { method: "DELETE" }); }), "danger"],
           ]) }, icon("more"))),
@@ -1464,8 +1543,10 @@ async function pageActivity() {
           j.state === "failed" && providerTrouble(j.detail) ? h("div", {}, h("a", { href: "#/settings" }, "Check your Usenet provider settings"), ", then Retry.") : null),
         h("td", { class: "right nowrap" }, fmtBytes(j.size)), h("td", { class: "nowrap muted" }, ago(j.finished)),
         h("td", { class: "act" },
-          j.state !== "completed" ? h("button", { class: "btn sm", title: j.state === "failed" ? "Try again: files already done are kept" : "Carry on from where it stopped", onclick: act(() => api(`/jobs/${j.job_id}/resume`, { body: {} })) }, icon("play"), j.state === "failed" ? "Retry" : "Resume") : null,
+          j.state !== "completed" ? h("button", { class: "btn sm", title: j.state === "failed" ? "Try again: files already done are kept" : "Carry on from where it stopped", onclick: act(() => api(`/jobs/${j.job_id}/resume`, { body: {} })) }, icon("play"), j.state === "failed" ? "Retry" : "Resume")
+            : SESSION.local && j.out_dir ? h("button", { class: "btn sm", title: "Open " + j.out_dir + " in Explorer", onclick: () => revealJob(j.job_id) }, icon("folder"), "Show") : null,
           " ", h("button", { class: "btn sm ghost icon", title: "More", onclick: (ev) => menu(ev.currentTarget, [
+            SESSION.local && j.out_dir ? ["Show in folder", () => revealJob(j.job_id)] : null,
             j.out_dir ? ["Copy folder path", () => copyText(j.out_dir)] : null,
             ["Remove from history (files stay)", act(() => api(`/jobs/${j.job_id}`, { method: "DELETE" }))],
             ["Delete the files too…", act(async () => {
@@ -1775,10 +1856,11 @@ async function pageSettings() {
     missing_retries: h("input", { class: "input", type: "number", min: 0, max: 10, value: s.missing_retries, style: { width: "110px" } }),
     max_parallel_jobs: h("input", { class: "input", type: "number", min: 1, max: 8, value: s.max_parallel_jobs, style: { width: "110px" } }),
     stream_connections: h("input", { class: "input", type: "number", min: 1, max: 64, value: s.stream_connections, style: { width: "110px" } }),
+    min_free_gb: h("input", { class: "input", type: "number", min: 0, max: 10000, value: s.min_free_gb ?? 5, style: { width: "110px" } }),
     index_cache_gb: h("input", { class: "input", type: "number", min: 0, max: 10000, value: s.index_cache_gb ?? 20, style: { width: "110px" } }),
     index_dir: h("input", { class: "input", value: s.index_dir || "", placeholder: "empty: index_cache in the data folder" }),
     sevenzip_path: h("input", { class: "input", value: s.sevenzip_path || "", placeholder: "empty: found by itself" }), unrar_path: h("input", { class: "input", value: s.unrar_path || "", placeholder: "empty: found by itself" }) };
-  const sws = { verify: sw(s.verify), extract: sw(s.extract), delete_archives: sw(s.delete_archives), extract_standalone: sw(s.extract_standalone) };
+  const sws = { verify: sw(s.verify), extract: sw(s.extract), delete_archives: sw(s.delete_archives), extract_standalone: sw(s.extract_standalone), notify: sw(s.notify) };
   const toolLine = () => h("div", { class: "help tool" });
   const tools = { sevenzip_path: toolLine(), unrar_path: toolLine() };
   const showTools = () => {
@@ -1795,6 +1877,8 @@ async function pageSettings() {
       ...field("Extract archives", sws.extract[1], "RAR archives and multi-part sets (.z01, .zip.001, .7z.001). Each download can choose otherwise when you queue it."),
       ...field("Also single .zip / .7z", sws.extract_standalone[1], "Off keeps them zipped: ROM, BIOS and asset packs are meant to stay that way."),
       ...field("Delete archives after", sws.delete_archives[1], "Only for sets that extracted cleanly."),
+      ...field("Keep free (GB)", d.min_free_gb, "Downloads pause when the download drive gets this full, and carry on by themselves once there's room again. 0 turns it off."),
+      ...field("Notifications", sws.notify[1], "A Windows notification from the tray icon when a download finishes or fails, or the disk fills up."),
       ...field("Parallel jobs", d.max_parallel_jobs, "How many downloads run at once.")),
     h("details", { class: "more" }, h("summary", {}, "Advanced"),
       h("div", { class: "form" },
@@ -1804,7 +1888,7 @@ async function pageSettings() {
         ...field("Full indexes, up to (GB)", d.index_cache_gb, "Downloads, previews and checks use a share's full index (about 100 MB per TB of share). Past this much, the ones used least recently are cut down to their file list, which is zipped and kept, so browsing stays instant; the rest is fetched again when needed. 0 keeps only file lists for shares not in use."),
         h("label", { class: "k" }, "7-Zip"), d.sevenzip_path, tools.sevenzip_path,
         h("label", { class: "k" }, "UnRAR"), d.unrar_path, tools.unrar_path)));
-  const nums = new Set(["missing_retries", "max_parallel_jobs", "stream_connections", "index_cache_gb"]);
+  const nums = new Set(["missing_retries", "max_parallel_jobs", "stream_connections", "index_cache_gb", "min_free_gb"]);
   for (const [k, el] of Object.entries(d)) el.addEventListener("change", async () => {
     if (await saveOn(downloads, { [k]: nums.has(k) ? +el.value : el.value })) {
       if (k === "categories") el.value = (s.categories || []).join(", ");
@@ -1874,6 +1958,13 @@ async function pageSettings() {
         ...group("layout", "Menu", [["side", "Full menu", mini("side")], ["rail", "Icons only", mini("rail")]]),
         ...group("theme", "Theme", [["dark", "Dark", themePv("dark")], ["light", "Light", themePv("light")], ["system", "Match the system", h("div", { class: "pv sw system" })]]),
         ...group("theme", "Console colours", THEMES.slice(2).map(([v, name]) => [v, name, themePv(v)])),
+        ...(canBrowserNotify() ? [h("label", { class: "k" }, "Notifications"), h("div", {},
+          h("label", { class: "check" }, h("input", { type: "checkbox", checked: store.get("ui.notify", false) && Notification.permission === "granted", onchange: async (ev) => {
+            const on = ev.target.checked;
+            if (on && Notification.permission !== "granted" && (await Notification.requestPermission()) !== "granted") { ev.target.checked = false; toast("The browser said no to notifications", "bad"); return; }
+            store.set("ui.notify", on);
+          } }), "Notify in this browser when a download finishes or fails"),
+          h("div", { class: "help" }, SESSION.tray_notify ? "usnfetch already notifies from the Windows tray, so this only adds something when it isn't running there." : "While this tab is open, even in the background."))] : []),
         ...group("density", "Density", [["comfortable", "Comfortable", h("div", { class: "pv lines" }, h("b"), h("b"), h("b"))], ["compact", "Compact", h("div", { class: "pv lines tight" }, h("b"), h("b"), h("b"), h("b"), h("b"))]]))));
   }
   renderAppearance();
@@ -1947,6 +2038,7 @@ async function pageSystem() {
 async function boot() {
   let sess;
   try { sess = await (await fetch("/api/session", { credentials: "same-origin" })).json(); } catch { sess = {}; }
+  SESSION = sess;
   if (sess.remote_blocked) {
     buildNav("");
     setTitle("Web password needed");
@@ -1963,7 +2055,8 @@ async function boot() {
   window.addEventListener("hashchange", route);
   $("#statusbar").addEventListener("click", () => { location.hash = "#/activity"; });
   (function poll() {   // every 1.5 s while something runs, every 3 s otherwise
-    setTimeout(async () => { if (!document.hidden) await pollStatus(); poll(); }, lastStatus && lastStatus.running > 0 ? 1500 : 3000);
+    const notifying = document.hidden && store.get("ui.notify", false) && !SESSION.tray_notify;   // keep listening for finished downloads
+    setTimeout(async () => { if (!document.hidden || notifying) await pollStatus(); poll(); }, document.hidden ? 15000 : lastStatus && lastStatus.running > 0 ? 1500 : 3000);
   })();
   await pollStatus(); renderBasket();   // the first status before the first page (it says whether a provider is set up)
   window.addEventListener("storage", (ev) => { if (ev.key === "usnf.basket") { basket.all = store.get("basket", {}); renderBasket(); if (page.onBasket) page.onBasket(); } });

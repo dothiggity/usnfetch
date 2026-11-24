@@ -88,6 +88,7 @@ func (r ScheduleRule) label() string {
 // Throttle is what downloads may do right now.
 type Throttle struct {
 	Paused bool    `json:"paused"`
+	Disk   bool    `json:"disk,omitempty"`  // paused because the download drive is nearly full
 	Limit  float64 `json:"limit"`           // bytes per second, 0 = unlimited
 	Reason string  `json:"reason"`          // for people: "paused until 14:30", "schedule: 10 MB/s Mon–Fri 08:00–18:00"
 	Manual bool    `json:"manual"`          // paused by hand
@@ -151,6 +152,10 @@ func (m *Manager) applyThrottle() {
 		_ = m.SaveSettings()
 	}
 	th := s.ThrottleAt(t)
+	if d := m.diskLow.Load(); d != nil { // the disk guard outranks everything else
+		th.Paused, th.Disk = true, true
+		th.Reason = fmt.Sprintf("paused: only %s free on %s (keeping %d GB free)", gbText(d.free), d.path, s.MinFreeGB)
+	}
 	old := m.throttle.Swap(&th)
 	engine.DownloadLimit.SetRate(th.Limit)
 	if old == nil || old.Reason != th.Reason {
@@ -189,7 +194,62 @@ func (m *Manager) governor() {
 		case <-t.C:
 		case <-m.kick:
 		}
+		m.checkDisk()
 		m.applyThrottle()
+	}
+}
+
+// diskLow: the download drive had less free space than Settings.MinFreeGB.
+type diskLow struct {
+	path string
+	free int64
+}
+
+// checkDisk pauses downloads before the download drive fills up, and lets them go on once
+// there is a GB more than the minimum again. Only while there is something to download.
+func (m *Manager) checkDisk() {
+	reserve := int64(m.Settings.MinFreeGB) * 1e9
+	dir := m.Settings.CompleteDir
+	cur := m.diskLow.Load()
+	m.mu.Lock()
+	busy := false
+	for _, j := range m.jobs {
+		if runningStates[j.State] || j.State == "queued" {
+			busy = true
+			break
+		}
+	}
+	m.mu.Unlock()
+	if reserve <= 0 || dir == "" || !busy {
+		if cur != nil {
+			m.diskLow.Store(nil)
+		}
+		return
+	}
+	free, err := DiskFree(dir)
+	if err != nil {
+		return
+	}
+	switch {
+	case cur == nil && free < reserve:
+		m.diskLow.Store(&diskLow{dir, free})
+		m.Log(fmt.Sprintf("downloads paused: only %s free on %s (keeping %d GB free; Settings -> Downloads)", gbText(free), dir, m.Settings.MinFreeGB))
+		m.notify("Downloads paused: the disk is nearly full", fmt.Sprintf("Only %s free on %s. They carry on once there's room.", gbText(free), dir), true)
+	case cur != nil && free >= reserve+1e9:
+		m.diskLow.Store(nil)
+		m.Log(fmt.Sprintf("downloads resume: %s free on %s", gbText(free), dir))
+		m.notify("Downloads resumed", fmt.Sprintf("%s free on %s again.", gbText(free), dir), false)
+	case cur != nil:
+		m.diskLow.Store(&diskLow{dir, free}) // keep the figure shown current
+	}
+}
+
+func gbText(n int64) string { return fmt.Sprintf("%.1f GB", float64(n)/1e9) }
+
+// notify: a notification on this machine, when it has a way to show one and they are on.
+func (m *Manager) notify(title, body string, warn bool) {
+	if f := m.Notify; f != nil && m.Settings.Notify {
+		go f(title, body, warn)
 	}
 }
 

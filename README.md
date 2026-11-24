@@ -67,6 +67,16 @@ RetroBat, LaunchBox, RetroPie…) and the device it's for (PC, Steam Deck, ROG A
 or 5, Anbernic…). usnfetch reads those from the titles and labels, so there's nothing to tag by
 hand. Click a launcher or device chip on any entry to see only those.
 
+Once you've opened a build, its row also says what's inside: how many games, for which systems
+(say "12,480 games in 38 systems: SNES 1,204 · PlayStation 890…"). usnfetch counts the games in
+the build's ROM folders, leaving out artwork, game lists and the extra tracks of disc games.
+Searching the catalog for a system finds the builds that have it, and on a build's page each
+system is a chip that opens its folder.
+
+**Search** looks inside every share you've opened at once. Type "Ocarina" or "scph1001" and you
+see which builds have it, where, and how big it is, with a click to that folder. Across 18 big
+shares it takes under a second.
+
 The Opened column keeps track of what you've already looked at. "Cached" means the share's full
 index is on disk, so it opens in seconds and previews start right away. A share that only has its
 file list saved (see "Where it keeps things") shows when you last opened it and "not cached": it
@@ -99,7 +109,12 @@ While things download, a bar along the bottom of every page shows what's going o
 file it's on, progress, ETA, speed and free space, with a pause button. The Activity page has the
 full queue (drag jobs to reorder them, or hold one back with its own pause) and the history. You
 can pause for a while, set a speed limit, or set a weekly schedule, say slower during the day and
-full speed at night.
+full speed at night. A finished download has a Show button that opens its folder in Explorer.
+
+Downloads pause by themselves before the download drive fills up: 5 GB is kept free unless you
+change it under Settings → Downloads. They carry on once there's room again. On Windows a
+notification from the tray icon tells you when a download finishes or fails, or when the disk
+guard steps in. You can turn that off in the same place.
 
 On Windows, right-click usnfetch next to the clock to open the app, pause, restart it, or have it
 start with Windows. Windows 11 tends to tuck new ones behind the ^ arrow, so drag it out if you

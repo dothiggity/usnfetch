@@ -101,6 +101,8 @@ func New(version string, m *app.Manager, cat *app.Catalog, static fs.FS, devDir 
 	go func() { // links nothing is known about yet get the link check, a moment after startup
 		time.Sleep(10 * time.Second)
 		s.checkUncheckedLinks()
+		time.Sleep(10 * time.Second)
+		s.fillInside() // what's inside the shares opened before that was worked out
 	}()
 	return s
 }
@@ -412,6 +414,7 @@ func (s *Server) loadShare(ss *session, password string) {
 		info = map[string]any{}
 	}
 	info["name"], info["size"], info["files"], info["packed"], info["opened_at"] = name, sum.Size, sum.Files, sum.Packed, float64(time.Now().UnixNano())/1e9
+	info["inside"], info["inside_v"] = insideOf(ix), insideVersion // its systems and games (inside.go)
 	for _, k := range []string{"format", "version", "access", "created_at", "signature", "owner_fingerprint"} {
 		info[k] = ix.Info[k]
 	}
@@ -590,7 +593,8 @@ func (s *Server) routes() {
 	s.api("GET /api/session", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		need := s.M.Settings.Web.PasswordHash != ""
 		local := isLoopback(r)
-		return map[string]any{"version": s.Version, "auth_required": need, "logged_in": (!need && local) || s.sessionOK(r), "remote_blocked": !need && !local}, nil
+		return map[string]any{"version": s.Version, "auth_required": need, "logged_in": (!need && local) || s.sessionOK(r), "remote_blocked": !need && !local,
+			"local": local, "tray_notify": s.M.Notify != nil && s.M.Settings.Notify}, nil
 	})
 	s.api("POST /api/login", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		stored := s.M.Settings.Web.PasswordHash
@@ -698,6 +702,8 @@ func (s *Server) routes() {
 	})
 	s.planRoutes()
 	s.linkCheckRoutes()
+	s.revealRoutes()
+	s.searchRoutes()
 
 	// shares
 	s.api("POST /api/shares/open", func(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -1088,7 +1094,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 		out = append(out, map[string]any{"id": app.LinkID(e.Link), "link": e.Link, "title": e.Title, "variant": e.Variant, "listed": e.Listed,
 			"listed_size": e.Size, "source": e.Source, "sku": e.SKU, "info": e.Info, "also": also, "added": e.Added,
 			"name": catalog.JobName(e, 90), "job": jv, "share": sh, "health": health, "got": got(e.Link),
-			"launchers": launchers, "devices": devices, "opened_at": openedAt, "cached": isCached})
+			"launchers": launchers, "devices": devices, "opened_at": openedAt, "cached": isCached, "inside": infos[e.Link]["inside"]})
 	}
 	type tagCount struct {
 		Name  string `json:"name"`
@@ -1539,6 +1545,9 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 	getInt("max_parallel_jobs", &st.MaxParallelJobs)
 	getInt("stream_connections", &st.StreamConnections)
 	getInt("index_cache_gb", &st.IndexCacheGB)
+	getInt("min_free_gb", &st.MinFreeGB)
+	st.MinFreeGB = min(10000, max(0, st.MinFreeGB))
+	getBool("notify", &st.Notify)
 	st.IndexCacheGB = min(10000, max(0, st.IndexCacheGB))
 	getBool("verify", &st.Verify)
 	getBool("extract", &st.Extract)

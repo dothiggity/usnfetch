@@ -164,6 +164,7 @@ func cmdTray(args []string) int {
 	}
 	var restart atomic.Bool
 	r.Web.Restart = func() { restart.Store(true); systray.Quit() }
+	r.M.Notify = trayNotify // downloads finished or failed, the disk filled up
 	systray.Run(func() { trayMenu(r, o) }, func() {})
 	r.Stop() // checkpoints saved, port and data folder free again
 	if restart.Load() {
