@@ -103,8 +103,10 @@ On Windows, right-click usnfetch next to the clock to open the app, pause, resta
 start with Windows. Windows 11 tends to tuck new ones behind the ^ arrow, so drag it out if you
 want to keep it in view.
 
-The look is up to you too: menu on the left, across the top or as a slim icon bar, dark or light,
-roomy or compact. That's remembered per browser.
+The look is up to you too. The menu on the left folds down to a slim icon bar with the button at
+its foot. Pick dark, light or whatever your system uses, roomy or compact. Just for fun there are
+console colour schemes as well: Super Famicom, N64, Game Boy, Game Gear, Mega Drive and Dreamcast.
+That's all remembered per browser.
 
 ## Running it on another machine
 

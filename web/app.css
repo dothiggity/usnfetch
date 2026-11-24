@@ -1,5 +1,6 @@
-/* usnfetch web UI — dark, *arr-style. Tokens first so the look is easy to iterate on. */
-:root {
+/* usnfetch web UI — dark, *arr-style. Tokens first so the look is easy to iterate on.
+   A theme is a set of tokens on [data-theme="…"]: the page's root, or a preview tile in Settings. */
+:root, [data-theme="dark"] {
   --bg: #16181d;
   --side: #1d2026;
   --panel: #22262e;
@@ -27,6 +28,7 @@
   --btn-hover-border: #46505f;
   --btn-hover-bg: #313744;
   --side-w: 220px;
+  --stripe: none;           /* a band of colour across the top of the menu (the console themes) */
   color-scheme: dark;
 }
 
@@ -47,6 +49,10 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
 /* ---------- shell ---------- */
 #app { display: grid; grid-template-columns: var(--side-w) 1fr; min-height: 100vh; }
 .side { background: var(--side); border-right: 1px solid var(--border-soft); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+.side::before { content: ""; display: block; height: 3px; background: var(--stripe); flex: none; }
+.side .collapse { display: flex; align-items: center; gap: 11px; margin: auto 10px 12px; padding: 9px 12px; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--faint); font: 550 13px var(--sans); cursor: pointer; }
+.side .collapse:hover { background: var(--panel); color: var(--text); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px; font-weight: 700; font-size: 17px; letter-spacing: .2px; }
 .brand .logo { width: 34px; height: 34px; flex: none; display: block; }
 .brand small { display: block; font-weight: 500; font-size: 11px; color: var(--faint); letter-spacing: .3px; }
@@ -68,6 +74,8 @@ main { min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 @media (max-width: 860px) {
   #app { grid-template-columns: minmax(0, 1fr); }   /* minmax: a wide table scrolls inside its box, the page never gets wider than the screen */
   .side { position: static; height: auto; flex-direction: row; align-items: center; flex-wrap: wrap; }
+  .side::before { width: 100%; }
+  .side .collapse { display: none; }
   .brand { padding: 12px 16px; }
   .nav { flex-direction: row; padding: 0 8px 8px; overflow-x: auto; width: 100%; }
   .top { padding: 12px 16px; flex-wrap: wrap; position: static; }
@@ -335,7 +343,7 @@ table.t th .arrow { color: var(--accent); }
 .basket .bl { display: grid; gap: 2px; }
 
 /* ---------- light theme ---------- */
-:root[data-theme="light"] {
+[data-theme="light"] {
   --bg: #f3f5f8;
   --side: #ffffff;
   --panel: #ffffff;
@@ -360,8 +368,59 @@ table.t th .arrow { color: var(--accent); }
   --btn-hover-bg: #e3e8ee;
   color-scheme: light;
 }
-:root[data-theme="light"] .btn.danger.solid { color: #fff; }
-:root[data-theme="light"] .modal-back { background: rgba(20, 28, 40, .38); }
+/* every light-toned theme (data-tone is set with the theme) */
+:root[data-tone="light"] .btn.danger.solid { color: #fff; }
+:root[data-tone="light"] .modal-back { background: rgba(20, 28, 40, .38); }
+
+/* ---------- console themes, just for fun: colours only, status colours stay readable ---------- */
+[data-theme="famicom"] {   /* Super Famicom: the grey case and its four buttons */
+  --bg: #d9d7d1; --side: #e6e4df; --panel: #f3f2ee; --panel-2: #e2e0da; --row-hover: #ebe9e4;
+  --border: #c2bfb7; --border-soft: #d2cfc8; --text: #25252a; --muted: #57575f; --faint: #85858d;
+  --accent: #3a59c6; --accent-ink: #ffffff; --ok: #2b8a43; --warn: #a97a00; --bad: #c9352f; --info: #6553c2; --packed: #7c4fb0;
+  --shadow: 0 10px 30px rgba(40, 38, 30, .18); --well: #e8e6e1; --well-ink: #34343a; --btn-hover-border: #aeaaa1; --btn-hover-bg: #dcd9d2;
+  --stripe: linear-gradient(90deg, #d23c35 0 25%, #f0bf2e 25% 50%, #2f9a4f 50% 75%, #3a59c6 75%);
+  color-scheme: light;
+}
+[data-theme="n64"] {       /* N64: charcoal, and the four colours of its logo */
+  --bg: #16171b; --side: #1c1d22; --panel: #23252b; --panel-2: #2b2e35; --row-hover: #272a31;
+  --border: #353943; --border-soft: #2b2e35; --text: #e8e9ed; --muted: #9a9fab; --faint: #6c717d;
+  --accent: #3f82ea; --accent-ink: #ffffff; --ok: #24a957; --warn: #ffc21c; --bad: #ec3a52; --info: #9fbaff; --packed: #c08cf2;
+  --well: #0f1013; --well-ink: #b9c0cc; --btn-hover-border: #474c58; --btn-hover-bg: #30333b;
+  --stripe: linear-gradient(90deg, #e4002b 0 25%, #ffc600 25% 50%, #009b48 50% 75%, #0046ad 75%);
+  color-scheme: dark;
+}
+[data-theme="gameboy"] {   /* Game Boy: the four greens of its screen */
+  --bg: #bfca86; --side: #b0bc75; --panel: #d2daa4; --panel-2: #c3cc90; --row-hover: #cad398;
+  --border: #8e9b55; --border-soft: #a4b06a; --text: #0f380f; --muted: #2f5f2f; --faint: #557637;
+  --accent: #306230; --accent-ink: #e3f0b8; --ok: #1d5a1d; --warn: #7a5a00; --bad: #8f2424; --info: #2b4d7c; --packed: #5b3c7d;
+  --shadow: 0 10px 30px rgba(15, 56, 15, .22); --well: #c7d192; --well-ink: #0f380f; --btn-hover-border: #7d8b47; --btn-hover-bg: #bcc683;
+  --stripe: linear-gradient(90deg, #2a3a8c 0 50%, #8c1c2c 50%);
+  color-scheme: light;
+}
+[data-theme="gamegear"] {  /* Game Gear: black case, blue start button */
+  --bg: #101012; --side: #17171a; --panel: #1f1f23; --panel-2: #28282d; --row-hover: #242428;
+  --border: #34343b; --border-soft: #28282d; --text: #ececf0; --muted: #a0a0ab; --faint: #70707b;
+  --accent: #3a6fe2; --accent-ink: #ffffff; --ok: #3cc480; --warn: #f0b23c; --bad: #ef5350; --info: #4fc3f7; --packed: #c08cf2;
+  --well: #0a0a0c; --well-ink: #b8b8c4; --btn-hover-border: #46464f; --btn-hover-bg: #2e2e34;
+  --stripe: linear-gradient(90deg, #e53935 0 20%, #fbc02d 20% 40%, #43a047 40% 60%, #1e88e5 60% 80%, #8e24aa 80%);
+  color-scheme: dark;
+}
+[data-theme="megadrive"] { /* Mega Drive: black, with the gold of "16-BIT" */
+  --bg: #0f0f10; --side: #161617; --panel: #1d1d1f; --panel-2: #262628; --row-hover: #222224;
+  --border: #333335; --border-soft: #262628; --text: #eeeeee; --muted: #a3a3a6; --faint: #727275;
+  --accent: #e0b23f; --accent-ink: #141414; --ok: #3cc480; --warn: #ff8c3a; --bad: #ef4b43; --info: #6fb3ff; --packed: #c08cf2;
+  --well: #09090a; --well-ink: #bdbdc0; --btn-hover-border: #47474a; --btn-hover-bg: #2c2c2e;
+  --stripe: linear-gradient(90deg, #d71920 0 50%, #e0b23f 50%);
+  color-scheme: dark;
+}
+[data-theme="dreamcast"] { /* Dreamcast: white, with the swirl's orange */
+  --bg: #f1f1ef; --side: #fbfbfa; --panel: #ffffff; --panel-2: #ecece9; --row-hover: #f6f6f4;
+  --border: #d6d6d2; --border-soft: #e6e6e3; --text: #232326; --muted: #5e5e66; --faint: #8f8f97;
+  --accent: #e8611a; --accent-ink: #ffffff; --ok: #1d8f58; --warn: #9c6a00; --bad: #c62f2f; --info: #2a6fc4; --packed: #8f4fc7;
+  --shadow: 0 10px 30px rgba(30, 30, 40, .14); --well: #f6f6f4; --well-ink: #36363c; --btn-hover-border: #bdbdb8; --btn-hover-bg: #e6e6e2;
+  --stripe: linear-gradient(90deg, #e8611a 0 70%, #2a6fc4 70%);
+  color-scheme: light;
+}
 
 /* ---------- compact density ---------- */
 :root[data-density="compact"] body { font-size: 13px; }
@@ -386,19 +445,7 @@ table.t th .arrow { color: var(--accent); }
 
 /* ---------- layouts (wide screens; phones always get the stacked layout) ---------- */
 @media (min-width: 861px) {
-  /* menu across the top */
-  :root[data-layout="top"] #app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  :root[data-layout="top"] .side { position: sticky; top: 0; z-index: 20; height: auto; flex-direction: row; align-items: center; gap: 4px;
-    padding: 0 20px; border-right: 0; border-bottom: 1px solid var(--border-soft); min-height: 56px; }
-  :root[data-layout="top"] .brand { padding: 10px 14px 10px 0; font-size: 16px; }
-  :root[data-layout="top"] .brand small { display: none; }
-  :root[data-layout="top"] .nav { flex-direction: row; padding: 0; gap: 2px; }
-  :root[data-layout="top"] .nav a { padding: 8px 12px; }
-  :root[data-layout="top"] .nav a.on { background: transparent; box-shadow: inset 0 -2px 0 var(--accent); border-radius: 0; }
-  :root[data-layout="top"] .top { position: static; }
-  :root[data-layout="top"] .basket { margin: 0 0 0 12px; }
-
-  /* icon rail */
+  /* the menu collapsed to icons */
   :root[data-layout="rail"] { --side-w: 64px; }
   :root[data-layout="rail"] .brand { justify-content: center; padding: 16px 0 12px; }
   :root[data-layout="rail"] .brand > div:not(.logo) { display: none; }
@@ -408,19 +455,19 @@ table.t th .arrow { color: var(--accent); }
   :root[data-layout="rail"] .nav a.on { box-shadow: inset 3px 0 0 var(--accent); }
   :root[data-layout="rail"] .nav .badge { position: absolute; top: 3px; right: 4px; margin: 0; padding: 0 5px; line-height: 16px; }
   :root[data-layout="rail"] .basket { margin: 10px 8px 0; }
+  :root[data-layout="rail"] .side .collapse { justify-content: center; padding: 11px 0; margin: auto 8px 12px; }
+  :root[data-layout="rail"] .side .collapse span { display: none; }
 
-  /* the basket as a button with a pop-over list (top bar and rail) */
-  :root[data-layout="top"] .basket, :root[data-layout="rail"] .basket { position: relative; padding: 0; border: 0; background: none; }
-  :root[data-layout="top"] .basket .bh, :root[data-layout="rail"] .basket .bh { cursor: pointer; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px;
+  /* the basket as a button with a pop-over list (collapsed menu) */
+  :root[data-layout="rail"] .basket { position: relative; padding: 0; border: 0; background: none; }
+  :root[data-layout="rail"] .basket .bh { cursor: pointer; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px;
     background: var(--panel); color: var(--text); text-transform: none; letter-spacing: 0; font-size: 12.5px; gap: 6px; width: auto; }
   :root[data-layout="rail"] .basket .bh { justify-content: center; padding: 6px 0; width: 100%; }
   :root[data-layout="rail"] .basket .bh .lbl { display: none; }
   :root[data-layout="rail"] .basket .bh .count { margin: 0; color: var(--text); }
-  :root[data-layout="top"] .basket .bl, :root[data-layout="rail"] .basket .bl { display: none; position: absolute; z-index: 40; min-width: 260px; max-width: 340px;
+  :root[data-layout="rail"] .basket .bl { display: none; position: absolute; z-index: 40; min-width: 260px; max-width: 340px;
     padding: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
-  :root[data-layout="top"] .basket .bl { top: calc(100% + 6px); right: 0; }
   :root[data-layout="rail"] .basket .bl { left: calc(100% + 8px); top: 0; }
-  :root[data-layout="top"] .basket:hover .bl, :root[data-layout="top"] .basket:focus-within .bl,
   :root[data-layout="rail"] .basket:hover .bl, :root[data-layout="rail"] .basket:focus-within .bl { display: grid; }
 }
 
@@ -436,12 +483,13 @@ table.t th .arrow { color: var(--accent); }
 .pv .m { background: var(--panel); display: grid; gap: 4px; padding: 5px; align-content: start; }
 .pv .m b { display: block; height: 5px; border-radius: 2px; background: var(--border); }
 .pv.side { grid-template-columns: 30px 1fr; }
-.pv.top { grid-template-rows: 12px 1fr; }
 .pv.rail { grid-template-columns: 12px 1fr; }
 .pv.sw { padding: 0; border-width: 1px; }
-.pv.sw.dark { background: linear-gradient(135deg, #16181d 0 60%, #22262e 60%); }
-.pv.sw.light { background: linear-gradient(135deg, #f3f5f8 0 60%, #ffffff 60%); }
 .pv.sw.system { background: linear-gradient(135deg, #16181d 0 50%, #f3f5f8 50%); }
+.pv.theme { grid-template-columns: 30px 1fr; position: relative; padding-top: 8px; }
+.pv.theme::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--stripe); }
+.pv.theme .n { background: var(--side); border: 1px solid var(--border-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.pv.theme .m b:first-child { background: var(--accent); width: 55%; }
 .pv.lines { align-content: center; gap: 9px; padding: 8px 10px; }
 .pv.lines.tight { gap: 4px; }
 .pv.lines b { display: block; height: 5px; border-radius: 2px; background: var(--border); }

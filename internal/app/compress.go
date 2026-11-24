@@ -137,7 +137,17 @@ func (m *Manager) tidyPass(startup bool) {
 			dropped++
 		}
 	}
-	// 3. full indexes past the limit, least recently used first: cut down to their file list
+	// 3. Windows: idle full indexes compressed by the file system (before the limit is
+	// checked: the limit counts the space they take on disk)
+	if canCompress {
+		fulls, _, _, _ = cacheFiles(dir)
+		for _, f := range fulls {
+			if f.size >= 1<<20 && f.disk >= f.size*9/10 {
+				act(f.path, func() error { return compressFile(f.path) })
+			}
+		}
+	}
+	// 4. full indexes past the limit, least recently used first: cut down to their file list
 	fulls, _, _, _ = cacheFiles(dir)
 	sort.Slice(fulls, func(i, j int) bool { return fulls[i].used.Before(fulls[j].used) })
 	var total int64
@@ -154,29 +164,20 @@ func (m *Manager) tidyPass(startup bool) {
 			cut++
 		}
 	}
-	// 4. idle file lists: zipped (about a quarter of the size)
+	// 5. idle file lists: zipped (about a quarter of the size)
 	_, lists, _, _ = cacheFiles(dir)
 	for _, l := range lists {
 		if exists(l.path+share.GzExt) || act(l.path, func() error { return share.GzipFile(l.path) }) {
 			zippedN++
 		}
 	}
-	// 5. zipped lists past their own (generous) limit, least recently used first
+	// 6. zipped lists past their own (generous) limit, least recently used first
 	_, _, zipped, _ = cacheFiles(dir)
 	sort.Slice(zipped, func(i, j int) bool { return zipped[i].used.After(zipped[j].used) })
 	var zt int64
 	for _, z := range zipped {
 		if zt += z.size; zt > listsLimit {
 			act(z.path, func() error { return os.Remove(z.path) })
-		}
-	}
-	// 6. Windows: idle full indexes compressed by the file system
-	if canCompress {
-		fulls, _, _, _ = cacheFiles(dir)
-		for _, f := range fulls {
-			if f.size >= 1<<20 && f.disk >= f.size*9/10 {
-				act(f.path, func() error { return compressFile(f.path) })
-			}
 		}
 	}
 	m.trimArt()

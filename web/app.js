@@ -35,7 +35,7 @@ const ICONS = {
   upload: "M12 20V9m0 0-4.5 4.5M12 9l4.5 4.5M5 4h14", trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13", stop: "M7 7h10v10H7Z",
   play: "M7 5l12 7-12 7Z", refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 11V5m0 6h-6", shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6Z",
   link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1", x: "M6 6l12 12M18 6 6 18",
-  ext: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5", check: "M5 12l5 5 9-10", pulse: "M3 12h4l3 7 4-14 3 7h4",
+  ext: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5", check: "M5 12l5 5 9-10", chevl: "M15 6l-6 6 6 6M20 6l-6 6 6 6", chevr: "M9 6l6 6-6 6M4 6l6 6-6 6", pulse: "M3 12h4l3 7 4-14 3 7h4",
   edit: "M4 20h4L19 9l-4-4L4 16Z", back: "M15 18l-6-6 6-6", server: "M4 5h16v6H4Z M4 13h16v6H4Z M8 8h.01M8 16h.01",
   grid: "M4 4h7v7H4Z M13 4h7v7h-7Z M4 13h7v7H4Z M13 13h7v7h-7Z", list: "M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01",
   pause: "M8 5v14M16 5v14", up: "M12 19V5m0 0-6 6m6-6 6 6", drag: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01", gauge: "M4 18a8 8 0 1 1 16 0M12 18l4-6",
@@ -159,16 +159,32 @@ const store = {
   set(k, v) { try { localStorage.setItem("usnf." + k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 
-// how the site looks, per browser: layout (side | top | rail), density, theme (dark | light | system)
-const UI = { layout: store.get("ui.layout", "side"), density: store.get("ui.density", "comfortable"), theme: store.get("ui.theme", "dark") };
-const lightQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+// how the site looks, per browser: layout (side | rail), density, theme (system or one of THEMES)
+// themes: [id, name, tone]; the console ones are colours only, just for fun
+const THEMES = [["dark", "Dark", "dark"], ["light", "Light", "light"],
+  ["famicom", "Super Famicom", "light"], ["n64", "N64", "dark"], ["gameboy", "Game Boy", "light"],
+  ["gamegear", "Game Gear", "dark"], ["megadrive", "Mega Drive", "dark"], ["dreamcast", "Dreamcast", "light"]];
+const toneOf = (t) => (THEMES.find((x) => x[0] === t) || [0, 0, "dark"])[2];
+// layout: "side" (the full menu) or "rail" (collapsed to icons); the old menu across the top is gone
+const UI = { layout: store.get("ui.layout", "side") === "rail" ? "rail" : "side", density: store.get("ui.density", "comfortable"), theme: store.get("ui.theme", "dark") };
+const lightQuery = window.matchMedia ? matchMedia("(prefers-color-scheme: light)") : null;
 function applyUI() {
   const r = document.documentElement.dataset;
   r.layout = UI.layout; r.density = UI.density;
-  r.theme = UI.theme === "system" ? (lightQuery && lightQuery.matches ? "light" : "dark") : UI.theme;
+  r.theme = UI.theme === "system" ? (lightQuery && lightQuery.matches ? "light" : "dark") : (THEMES.some((x) => x[0] === UI.theme) ? UI.theme : "dark");
+  r.tone = toneOf(r.theme);
+  const c = $(".side .collapse");
+  if (c) {
+    const folded = UI.layout === "rail";
+    c.title = folded ? "Show the full menu" : "Collapse the menu to icons";
+    c.setAttribute("aria-expanded", folded ? "false" : "true");
+    put(c, icon(folded ? "chevr" : "chevl"), h("span", {}, "Collapse menu"));
+  }
 }
 function setUI(k, v) { UI[k] = v; store.set("ui." + k, v); applyUI(); }
 if (lightQuery) lightQuery.addEventListener("change", () => { if (UI.theme === "system") applyUI(); });
+// the menu's collapse button, at its foot
+$(".side").append(h("button", { class: "collapse", type: "button", onclick: () => setUI("layout", UI.layout === "rail" ? "side" : "rail") }));
 applyUI();
 
 const STATE_CHIP = { queued: "", paused: "warn", planning: "info", downloading: "info", extracting: "info", stopping: "warn",
@@ -1851,10 +1867,13 @@ async function pageSettings() {
       h("button", { class: "tile" + (UI[key] === v ? " on" : ""), type: "button", "aria-pressed": UI[key] === v ? "true" : "false",
         onclick: () => { setUI(key, v); renderAppearance(); } }, pv, h("span", {}, name))))];
     const mini = (cls) => h("div", { class: "pv " + cls }, h("i", { class: "n" }), h("i", { class: "m" }, h("b"), h("b"), h("b")));
+    // a theme's tile: a small menu and page in that theme's own colours
+    const themePv = (t) => h("div", { class: "pv theme", "data-theme": t }, h("i", { class: "n" }), h("i", { class: "m" }, h("b"), h("b"), h("b")));
     put(appearance, h("div", { class: "head" }, icon("grid"), h("h2", {}, "Appearance"), h("span", { class: "grow" }), h("span", { class: "faint", style: { fontSize: "12.5px" } }, "Saved in this browser")),
       h("div", { class: "body" }, h("div", { class: "form" },
-        ...group("layout", "Layout", [["side", "Menu on the left", mini("side")], ["top", "Menu across the top", mini("top")], ["rail", "Icon rail", mini("rail")]]),
-        ...group("theme", "Theme", [["dark", "Dark", h("div", { class: "pv sw dark" })], ["light", "Light", h("div", { class: "pv sw light" })], ["system", "Match the system", h("div", { class: "pv sw system" })]]),
+        ...group("layout", "Menu", [["side", "Full menu", mini("side")], ["rail", "Icons only", mini("rail")]]),
+        ...group("theme", "Theme", [["dark", "Dark", themePv("dark")], ["light", "Light", themePv("light")], ["system", "Match the system", h("div", { class: "pv sw system" })]]),
+        ...group("theme", "Console colours", THEMES.slice(2).map(([v, name]) => [v, name, themePv(v)])),
         ...group("density", "Density", [["comfortable", "Comfortable", h("div", { class: "pv lines" }, h("b"), h("b"), h("b"))], ["compact", "Compact", h("div", { class: "pv lines tight" }, h("b"), h("b"), h("b"), h("b"), h("b"))]]))));
   }
   renderAppearance();

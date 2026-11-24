@@ -8,8 +8,9 @@
 <link rel="stylesheet" href="/static/app.css">
 <script>/* the saved look, before the first paint (app.js keeps it in step) */
 try { const g = (k, d) => { const v = localStorage.getItem("usnf.ui." + k); return v == null ? d : JSON.parse(v); }, r = document.documentElement.dataset, t = g("theme", "dark");
-  r.layout = g("layout", "side"); r.density = g("density", "comfortable");
-  r.theme = t === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : t; } catch (e) {}</script>
+  r.layout = g("layout", "side") === "rail" ? "rail" : "side"; r.density = g("density", "comfortable");
+  r.theme = t === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : t;
+  r.tone = ["light", "famicom", "gameboy", "dreamcast"].includes(r.theme) ? "light" : "dark"; } catch (e) {}</script>
 </head>
 <body>
 <div id="app">
