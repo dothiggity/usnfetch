@@ -67,9 +67,10 @@ RetroBat, LaunchBox, RetroPie…) and the device it's for (PC, Steam Deck, ROG A
 or 5, Anbernic…). usnfetch reads those from the titles and labels, so there's nothing to tag by
 hand. Click a launcher or device chip on any entry to see only those.
 
-The Opened column keeps track of what you've already looked at. "Cached" means the share's index
-is still on disk, so it opens in seconds; after a few days unused that's cleared to save space and
-the column just says when you last opened it. Sort by it, or show only the shares you've opened,
+The Opened column keeps track of what you've already looked at. "Cached" means the share's full
+index is on disk, so it opens in seconds and previews start right away. A share that only has its
+file list saved (see "Where it keeps things") shows when you last opened it and "not cached": it
+still opens straight away for browsing. Sort by the column, or show only the shares you've opened,
 the cached ones, or the ones you haven't opened yet.
 
 The Health column says whether a share is still on your provider. Right after an import, usnfetch
@@ -96,8 +97,9 @@ zipped.
 
 While things download, a bar along the bottom of every page shows what's going on: the job, the
 file it's on, progress, ETA, speed and free space, with a pause button. The Activity page has the
-full queue (drag jobs to reorder them, or hold one back with its own pause) and the history. You can pause for a while, set a speed
-limit, or set a weekly schedule, say slower during the day and full speed at night.
+full queue (drag jobs to reorder them, or hold one back with its own pause) and the history. You
+can pause for a while, set a speed limit, or set a weekly schedule, say slower during the day and
+full speed at night.
 
 On Windows, right-click usnfetch next to the clock to open the app, pause, restart it, or have it
 start with Windows. Windows 11 tends to tuck new ones behind the ^ arrow, so drag it out if you
@@ -139,12 +141,13 @@ called `portable` in the same folder as `usnfetch.exe`.
 
 Each share you open leaves its index in the data folder, so opening it again is instant. Shares
 never change, so nothing there expires. A full index, the kind downloads, previews and checks
-need, is roughly 100 MB per TB of share. The ones you used most recently are kept up to a limit
-(20 GB unless you change it in Settings). Past that, the least recently used are cut down to just
-their file list, which is zipped while it isn't in use and is usually a few MB. Browsing those
-shares is still instant, and the rest of the index is fetched again the first time you preview,
-check or download something from them. Box art you've already looked at is kept too, so a gallery
-you've seen opens without going back to Usenet. On Windows the full indexes are also compressed by
+need, is roughly 100 MB per TB of share. The ones you used most recently are kept up to a limit:
+20 GB unless you change it under Settings → Downloads → Advanced. Past that, the least recently
+used are cut down to just their file list, which is zipped while it isn't in use. That's a few MB
+for most shares, and about 150 MB for one with three million files. Browsing those shares is
+still instant, and the rest of the index is fetched again the first time you preview, check or
+download something from them. Box art you've already looked at is kept too, so a gallery you've
+seen opens without going back to Usenet. On Windows the full indexes are also compressed by
 Windows itself while they're not in use, which roughly halves them again. The System page shows
 what all this takes.
 
@@ -152,7 +155,9 @@ Provider passwords are encrypted with Windows' own data protection, so only your
 read them.
 
 If you're coming from the old Python version of usnfetch, point it at the same folder and it pulls
-in your old jobs, catalog and settings the first time it starts.
+in your old jobs, catalog and settings the first time it starts. Share indexes saved by older
+versions are converted to the current, smaller format in the background, without downloading
+anything again.
 
 ## A couple of command-line extras
 
@@ -179,14 +184,14 @@ Release builds are plain cross-compiles with no C toolchain needed:
 A quick map of the code:
 
     cmd/usnfetch/      the program itself: serve, tray, list, fetch, set-password, version
-    internal/share/    share links, manifests and signatures, building and searching the index
-    internal/engine/   the downloading: connections, decrypting, packed small files, streaming, speed limit
-    internal/nntp/     a small NNTP client
+    internal/share/    share links, manifests and signatures, building, converting and searching the index
+    internal/engine/   the downloading: connections, decrypting, packed small files, streaming, speed limit, checks
+    internal/nntp/     a small NNTP client, and each provider's shared connection budget
     internal/yenc/     yEnc decoding
-    internal/app/      settings, the job queue, the schedule, saved state
+    internal/app/      settings, the job queue, the schedule, saved state, upkeep of the index cache
     internal/catalog/  reading link lists, and the launcher and device each entry is for
     internal/extract/  finding and unpacking archives (7-Zip / UnRAR)
-    internal/web/      the web API: shares, gallery, files already on disk, setup
+    internal/web/      the web API: shares, gallery and box art, health checks, files already on disk, setup
     web/               the browser UI
 
 ## Tests
@@ -196,10 +201,10 @@ A quick map of the code:
 ## Making a release
 
 Write what changed in `.github/release-notes/v<version>.md`, set `Version` in
-`cmd/usnfetch/serve.go` to match, commit, then tag and push:
+`cmd/usnfetch/serve.go` to match, commit, then tag and push (here for 1.2.3):
 
-    git tag -a v0.10.0 -m "usnfetch 0.10.0"
-    git push origin main v0.10.0
+    git tag -a v1.2.3 -m "usnfetch 1.2.3"
+    git push origin main v1.2.3
 
 GitHub Actions runs the tests on Windows and Linux, builds every download with GoReleaser
 (`.goreleaser.yaml`) and publishes the release with those notes.
