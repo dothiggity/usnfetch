@@ -28,6 +28,7 @@ type budget struct {
 	limit   int
 	used    int
 	waiting int // non-download dials waiting for a connection
+	queued  int // every dial waiting for a connection, downloads too
 }
 
 var (
@@ -58,20 +59,33 @@ func budgetOf(a *Account) *budget {
 }
 
 // acquire takes a place, waiting up to wait. A download (bulk) also waits while anything
-// else is waiting.
+// else is waiting. Only dials that actually wait count as waiting (wanted, contended).
 func (b *budget) acquire(bulk bool, wait time.Duration) bool {
 	deadline := time.Now().Add(wait)
 	wake := time.AfterFunc(wait, b.cond.Broadcast)
 	defer wake.Stop()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !bulk {
-		b.waiting++
-		defer func() { b.waiting-- }()
-	}
+	blocked := false
+	defer func() {
+		if blocked {
+			b.queued--
+			if !bulk {
+				b.waiting--
+				b.cond.Broadcast() // downloads held back for this one may go on
+			}
+		}
+	}()
 	for b.used >= b.limit || (bulk && b.waiting > 0) {
 		if !time.Now().Before(deadline) {
 			return false
+		}
+		if !blocked {
+			blocked = true
+			b.queued++
+			if !bulk {
+				b.waiting++
+			}
 		}
 		b.cond.Wait()
 	}
@@ -90,6 +104,12 @@ func (b *budget) wanted() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.waiting > 0
+}
+
+func (b *budget) contended() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.queued > 0
 }
 
 // Waits for a place in the budget: other uses wait longer (downloads give way within about an

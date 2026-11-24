@@ -106,6 +106,10 @@ func dialIn(a *Account, timeout time.Duration, bulk bool) (*Conn, error) {
 // waiting for a place in the budget.
 func (c *Conn) Yield() bool { return c.bulk && c.bud != nil && c.bud.wanted() }
 
+// Contended: some dial is waiting for a place in this connection's budget, so a connection
+// that is done should be closed rather than kept idle (an idle one holds its place).
+func (c *Conn) Contended() bool { return c.bud != nil && c.bud.contended() }
+
 func connect(a *Account, timeout time.Duration) (*Conn, error) {
 	addr := net.JoinHostPort(a.Server, fmt.Sprint(a.Port))
 	raw, err := net.DialTimeout("tcp", addr, timeout)

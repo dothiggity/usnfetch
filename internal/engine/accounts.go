@@ -109,6 +109,8 @@ type Pool struct {
 	mu       sync.Mutex
 	idle     map[*nntp.Account][]idleConn
 	backup   map[*nntp.Account]chan struct{}
+	reaping  bool          // the idle-connection reaper is running
+	closed   chan struct{} // closed by Close: stops the reaper
 }
 
 type idleConn struct {
@@ -121,7 +123,7 @@ type idleConn struct {
 var IdleMax = 50 * time.Second
 
 func NewPool(s *AccountSet) *Pool {
-	p := &Pool{Accounts: s, idle: map[*nntp.Account][]idleConn{}, backup: map[*nntp.Account]chan struct{}{}}
+	p := &Pool{Accounts: s, idle: map[*nntp.Account][]idleConn{}, backup: map[*nntp.Account]chan struct{}{}, closed: make(chan struct{})}
 	for _, a := range s.Backup {
 		p.backup[a] = make(chan struct{}, max(1, a.Connections))
 	}
@@ -158,12 +160,19 @@ func (p *Pool) dial(a *nntp.Account) (*nntp.Conn, error) {
 	return nntp.Dial(a, DialTimeout)
 }
 
+// Put keeps a connection for reuse, unless some dial is waiting for a place in the provider's
+// connection budget: an idle connection holds its place, so it is closed and the place goes
+// to the dial waiting for it (otherwise that dial could wait out its time for nothing).
 func (p *Pool) Put(c *nntp.Conn) {
-	if c.Yield() { // something else is waiting for a connection: hand this one back
+	if c.Contended() {
 		c.Close()
 		return
 	}
 	p.mu.Lock()
+	if !p.reaping {
+		p.reaping = true
+		go p.reap()
+	}
 	p.idle[c.Account] = append(p.idle[c.Account], idleConn{c, time.Now()})
 	p.mu.Unlock()
 }
@@ -179,10 +188,46 @@ func (p *Pool) DropIdle(a *nntp.Account) {
 	}
 }
 
+// reap closes connections idle past IdleMax (they could not be reused anyway, and each holds a
+// place in its provider's connection budget) until the pool is closed.
+func (p *Pool) reap() {
+	t := time.NewTicker(max(IdleMax/5, 10*time.Millisecond))
+	defer t.Stop()
+	for {
+		select {
+		case <-p.closed:
+			return
+		case <-t.C:
+		}
+		var stale []*nntp.Conn
+		p.mu.Lock()
+		for a, l := range p.idle {
+			keep := l[:0]
+			for _, x := range l {
+				if time.Since(x.since) > IdleMax {
+					stale = append(stale, x.c)
+				} else {
+					keep = append(keep, x)
+				}
+			}
+			p.idle[a] = keep
+		}
+		p.mu.Unlock()
+		for _, c := range stale {
+			c.Close()
+		}
+	}
+}
+
 func (p *Pool) Close() {
 	p.mu.Lock()
 	idle := p.idle
 	p.idle = map[*nntp.Account][]idleConn{}
+	select {
+	case <-p.closed:
+	default:
+		close(p.closed)
+	}
 	p.mu.Unlock()
 	for _, l := range idle {
 		for _, x := range l {
