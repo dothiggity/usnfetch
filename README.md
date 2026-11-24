@@ -63,6 +63,11 @@ RetroBat, LaunchBox, RetroPie…) and the device it's for (PC, Steam Deck, ROG A
 or 5, Anbernic…). usnfetch reads those from the titles and labels, so there's nothing to tag by
 hand. Click a launcher or device chip on any entry to see only those.
 
+The Opened column keeps track of what you've already looked at. "Cached" means the share's index
+is still on disk, so it opens in seconds; after a few days unused that's cleared to save space and
+the column just says when you last opened it. Sort by it, or show only the shares you've opened,
+the cached ones, or the ones you haven't opened yet.
+
 ## What it's like to use
 
 Open a share and you get its folders and files, with search, sorting by name or size, and for game

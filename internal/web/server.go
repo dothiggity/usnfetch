@@ -963,6 +963,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 	entries := s.Cat.Snapshot()
 	out := make([]map[string]any, 0, len(entries))
 	sources := map[string]bool{}
+	cached := cachedFolders(s.M.IndexDir())
 	// ?launcher= and ?device= (a device or a device group; "none": the entries naming none)
 	wantL, wantD := strings.TrimSpace(r.URL.Query().Get("launcher")), strings.TrimSpace(r.URL.Query().Get("device"))
 	nLaunchers, nDevices := map[string]int{}, map[string]int{}
@@ -996,6 +997,11 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 				health = map[string]any{"verdict": ck["verdict"], "sampled": ck["sampled"], "available": ck["available"], "checked_at": ck["checked_at"]}
 			}
 		}
+		openedAt := infos[e.Link]["opened_at"] // when it was last opened to browse (nil: never)
+		isCached := false                      // its index is on disk, so it opens in seconds
+		if l, err := share.ParseLink(e.Link); err == nil {
+			isCached = cached[strings.ToLower(l.FolderID)]
+		}
 		also := e.Also
 		if also == nil {
 			also = []string{}
@@ -1003,7 +1009,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 		out = append(out, map[string]any{"id": app.LinkID(e.Link), "link": e.Link, "title": e.Title, "variant": e.Variant, "listed": e.Listed,
 			"listed_size": e.Size, "source": e.Source, "sku": e.SKU, "info": e.Info, "also": also, "added": e.Added,
 			"name": catalog.JobName(e, 90), "job": jv, "share": sh, "health": health, "got": got(e.Link),
-			"launchers": launchers, "devices": devices})
+			"launchers": launchers, "devices": devices, "opened_at": openedAt, "cached": isCached})
 	}
 	type tagCount struct {
 		Name  string `json:"name"`
@@ -1033,6 +1039,23 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 	}
 	return map[string]any{"entries": out, "sources": srcs, "categories": s.M.Settings.Categories, "default_category": def,
 		"tags": map[string]any{"launchers": tl, "devices": td, "groups": catalog.DeviceGroups}}, nil
+}
+
+// cachedFolders: the share folders whose index is in the cache folder now. Index files are
+// named <folder id>-<manifest hash>.usnindex; a build in progress has a longer name.
+func cachedFolders(dir string) map[string]bool {
+	out := map[string]bool{}
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		name, ok := strings.CutSuffix(e.Name(), ".usnindex")
+		if !ok || strings.Contains(name, ".usnindex") {
+			continue
+		}
+		if i := strings.LastIndex(name, "-"); i > 0 {
+			out[strings.ToLower(name[:i])] = true
+		}
+	}
+	return out
 }
 
 // tagWanted: whether tags pass a ?launcher= / ?device= filter: none given, "none" (no tags),

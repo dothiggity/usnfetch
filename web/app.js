@@ -455,7 +455,7 @@ async function downloadEntries(entries, done) {
 async function pageCatalog() {
   setTitle("Catalog");
   const f = { q: store.get("cat.q", ""), source: store.get("cat.source", ""), launcher: store.get("cat.launcher", ""), device: store.get("cat.device", ""),
-    hide: store.get("cat.hide", false), sort: store.get("cat.sort", "title") };
+    seen: store.get("cat.seen", ""), hide: store.get("cat.hide", false), sort: store.get("cat.sort", "title") };
   let data = { entries: [], sources: [], categories: ["Default"], tags: { launchers: [], devices: [], groups: [] } };
   let groupOf = {}, deviceRank = {};   // device -> its group; device -> its place in the device list
   const sel = new Set();
@@ -472,12 +472,17 @@ async function pageCatalog() {
     (which === "launcher" ? lsel : dsel).value = v;
     render();
   }
+  // opened before or not: "opened" (browsed at some point), "cached" (its index is on disk, so it
+  // opens in seconds), "new" (never opened)
+  const seenSel = h("select", { class: "input", title: "Shares you have opened before, and those whose index is still cached", onchange: () => {
+    f.seen = seenSel.value; store.set("cat.seen", f.seen); render();
+  } });
   const sort = h("select", { class: "input", onchange: () => { f.sort = sort.value; store.set("cat.sort", f.sort); render(); } },
-    [["title", "Title"], ["size-desc", "Size: largest"], ["size-asc", "Size: smallest"], ["added", "Recently added"], ["status", "Status"],
+    [["title", "Title"], ["size-desc", "Size: largest"], ["size-asc", "Size: smallest"], ["added", "Recently added"], ["opened", "Recently opened"], ["status", "Status"],
       ["launcher", "Launcher"], ["device", "Device"]]
       .map(([v, l]) => h("option", { value: v, selected: f.sort === v }, l)));
   const hide = h("input", { type: "checkbox", checked: f.hide, onchange: () => { f.hide = hide.checked; store.set("cat.hide", f.hide); render(); } });
-  const filters = [h("div", { class: "search" }, icon("search"), q), src, lsel, dsel, sort, h("label", { class: "check", title: "Hide entries that are queued or downloaded in full" }, hide, "Hide queued / done")];
+  const filters = [h("div", { class: "search" }, icon("search"), q), src, lsel, dsel, seenSel, sort, h("label", { class: "check", title: "Hide entries that are queued or downloaded in full" }, hide, "Hide queued / done")];
   const importBtn = h("button", { class: "btn primary", onclick: () => importDialog(load) }, icon("upload"), "Import list");
   toolbar(...filters, h("button", { class: "btn", onclick: openLinkDialog }, icon("link"), "Open link"), importBtn);
 
@@ -495,7 +500,7 @@ async function pageCatalog() {
     return th;
   }
   const thead = h("thead", {}, h("tr", {}, h("th", { class: "cb" }, head), cth("Title", "title"), cth("Size", "size", "right"),
-    h("th", {}, "Health"), cth("Status", "status"), h("th", { class: "act" }, "")));
+    cth("Opened", "opened"), h("th", {}, "Health"), cth("Status", "status"), h("th", { class: "act" }, "")));
   const table = h("div", { class: "tablewrap" }, h("table", { class: "t" }, thead, tbody));
   view.append(count, table, dock);
   api("/status").then((st) => {
@@ -509,6 +514,8 @@ async function pageCatalog() {
   const complete = (e) => !!(e.got && e.got.complete);
   const done = (e) => active(e) || complete(e);
   const launchers = (e) => e.launchers || [], devices = (e) => e.devices || [];
+  const opened = (e) => !!(e.opened_at || e.cached);
+  const seenOk = (e) => !f.seen || (f.seen === "opened" ? opened(e) : f.seen === "cached" ? e.cached : !opened(e));
   function tagOk(tags, want) {
     if (!want) return true;
     if (want === "-") return !tags.length;
@@ -518,7 +525,7 @@ async function pageCatalog() {
   function visible() {
     const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
     let out = data.entries.filter((e) => (!f.source || e.source === f.source) && !(f.hide && done(e)) &&
-      tagOk(launchers(e), f.launcher) && tagOk(devices(e), f.device) &&
+      tagOk(launchers(e), f.launcher) && tagOk(devices(e), f.device) && seenOk(e) &&
       words.every((w) => `${e.title} ${e.variant} ${e.listed} ${e.source} ${e.sku} ${e.name} ${(e.also || []).join(" ")} ${launchers(e).join(" ")} ${devices(e).join(" ")}`.toLowerCase().includes(w)));
     const rank = (e) => (active(e) ? 3 : complete(e) ? 2 : e.got ? 1 : 0);
     const title = (a, b) => a.title.localeCompare(b.title);
@@ -526,7 +533,9 @@ async function pageCatalog() {
     const firstL = (e) => launchers(e)[0] || "\uffff", firstD = (e) => (devices(e).length ? deviceRank[devices(e)[0]] ?? 1e6 : 1e7);
     const by = { "size-desc": (a, b) => size(b) - size(a), "size-asc": (a, b) => size(a) - size(b), added: (a, b) => (b.added || 0) - (a.added || 0),
       status: (a, b) => rank(b) - rank(a), title,
-      launcher: (a, b) => firstL(a).localeCompare(firstL(b)) || title(a, b), device: (a, b) => firstD(a) - firstD(b) || title(a, b) }[f.sort] || title;
+      launcher: (a, b) => firstL(a).localeCompare(firstL(b)) || title(a, b), device: (a, b) => firstD(a) - firstD(b) || title(a, b),
+      // last opened first; cached but never opened to browse (a download's index) next; never opened last
+      opened: (a, b) => (b.opened_at || (b.cached ? 1 : 0)) - (a.opened_at || (a.cached ? 1 : 0)) || title(a, b) }[f.sort] || title;
     return out.sort(by);
   }
 
@@ -574,6 +583,16 @@ async function pageCatalog() {
     return h("span", { class: "faint" }, "—");
   }
 
+  // opened before? when, and whether its index is still cached (then it opens in seconds)
+  function openedCell(e) {
+    const when = e.opened_at ? ago(e.opened_at) : "";
+    if (e.cached) return h("div", { class: "nowrap", title: (when ? "Opened " + when + ". " : "") + "Its index is still cached, so it opens in seconds." },
+      h("span", { class: "chip seen" }, icon("eye"), "cached"), when ? h("div", { class: "faint small" }, when) : null);
+    if (e.opened_at) return h("div", { class: "nowrap", title: "Opened " + when + ". Its index has since been cleared from the cache, so opening it again fetches the index again." },
+      h("span", { class: "muted" }, icon("eye"), " " + when), h("div", { class: "faint small" }, "not cached"));
+    return h("span", { class: "faint", title: "Not opened yet" }, "—");
+  }
+
   function sizeCell(e) {
     if (e.share) return [fmtBytes(e.share.size), h("div", { class: "faint small", title: e.listed ? "Listed as " + e.listed : "" }, `${e.share.files.toLocaleString()} file${e.share.files === 1 ? "" : "s"}`)];
     if (e.listed) return h("span", { class: "muted", title: "The size the list gives; the share's own size shows once it has been opened" }, e.listed, h("div", { class: "faint small" }, "listed"));
@@ -582,13 +601,13 @@ async function pageCatalog() {
 
   function render() {
     const total = data.entries.length;
-    lsel.classList.toggle("on", !!f.launcher); dsel.classList.toggle("on", !!f.device);   // a filter is narrowing the list
+    lsel.classList.toggle("on", !!f.launcher); dsel.classList.toggle("on", !!f.device); seenSel.classList.toggle("on", !!f.seen);   // a filter is narrowing the list
     for (const el of filters) el.classList.toggle("hidden", !total);   // nothing to filter yet
     thead.classList.toggle("hidden", !total);
     const vis = visible();
     tbody.replaceChildren(...vis.map((e) => {
       const cb = h("input", { type: "checkbox", checked: sel.has(e.id), onchange: () => { cb.checked ? sel.add(e.id) : sel.delete(e.id); render(); } });
-      return h("tr", { class: sel.has(e.id) ? "sel" : "" },
+      return h("tr", { class: (sel.has(e.id) ? "sel " : "") + (e.cached ? "seen" : "") },
         h("td", { class: "cb" }, cb),
         h("td", { class: "title-cell" }, h("a", { class: "t1", href: "#", title: "Browse this share", onclick: (ev) => { ev.preventDefault(); openShare({ catalog_id: e.id }).catch(fail); } }, e.title),
           h("div", { class: "t2" }, e.variant ? h("span", {}, e.variant) : null,
@@ -597,6 +616,7 @@ async function pageCatalog() {
             e.sku ? h("span", { class: "faint mono" }, e.sku) : null,
             e.info ? h("a", { href: e.info, target: "_blank", rel: "noopener", title: e.info }, icon("ext")) : null)),
         h("td", { class: "right nowrap" }, sizeCell(e)),
+        h("td", {}, openedCell(e)),
         h("td", {}, healthChip(e.health)),
         h("td", {}, statusCell(e)),
         h("td", { class: "act" },
@@ -613,7 +633,8 @@ async function pageCatalog() {
     const partial = data.entries.filter((e) => e.got && !e.got.complete).length;
     put(count, total ? [h("span", {}, `${vis.length} of ${total} entries`),
       h("span", {}, `${data.entries.filter(complete).length} downloaded`), partial ? h("span", {}, `${partial} in part`) : null,
-      h("span", {}, `${data.entries.filter((e) => e.health && e.health.verdict === "available").length} checked available`)] : null);
+      h("span", {}, `${data.entries.filter((e) => e.health && e.health.verdict === "available").length} checked available`),
+      h("span", {}, `${data.entries.filter(opened).length} opened · ${data.entries.filter((e) => e.cached).length} cached`)] : null);
     dock.classList.toggle("hidden", !selected.length);
     importBtn.classList.toggle("primary", !selected.length);   // one main action at a time
     if (selected.length) {
@@ -630,7 +651,7 @@ async function pageCatalog() {
         h("button", { class: "btn primary", onclick: () => downloadEntries(selected, () => { sel.clear(); load(); }).catch(fail) }, icon("download"), "Download selected…"));
     }
     if (!total) {
-      tbody.replaceChildren(h("tr", {}, h("td", { colspan: 6 }, h("div", { class: "empty left" }, h("h3", {}, "No shares yet"),
+      tbody.replaceChildren(h("tr", {}, h("td", { colspan: 7 }, h("div", { class: "empty left" }, h("h3", {}, "No shares yet"),
         h("div", { class: "muted" }, "usnfetch doesn't come with any shares. Add the share links you have:"), addSharesHelp(true)))));
     }
   }
@@ -639,6 +660,9 @@ async function pageCatalog() {
     data = await api("/catalog");
     src.replaceChildren(h("option", { value: "" }, "All sources"), ...data.sources.map((s) => h("option", { value: s, selected: f.source === s }, s)));
     fillTagMenus();
+    const n = (pred) => data.entries.filter(pred).length;
+    seenSel.replaceChildren(...[["", "Opened or not", null], ["opened", "Opened before", n(opened)], ["cached", "Cached (opens fast)", n((e) => e.cached)],
+      ["new", "Not opened yet", n((e) => !opened(e))]].map(([v, l, c]) => h("option", { value: v, selected: f.seen === v }, c == null ? l : `${l} (${c})`)));
     render();
   }
   await load();
