@@ -105,6 +105,7 @@ var DialTimeout = 60 * time.Second
 // Pool keeps idle connections per account between files and jobs.
 type Pool struct {
 	Accounts *AccountSet
+	Bulk     bool // a download's pool: its connections give way to other uses (nntp budget)
 	mu       sync.Mutex
 	idle     map[*nntp.Account][]idleConn
 	backup   map[*nntp.Account]chan struct{}
@@ -144,13 +145,24 @@ func (p *Pool) Get(a *nntp.Account) (*nntp.Conn, error) {
 		for _, x := range l {
 			x.c.Close()
 		}
-		return nntp.Dial(a, DialTimeout)
+		return p.dial(a)
 	}
 	p.mu.Unlock()
+	return p.dial(a)
+}
+
+func (p *Pool) dial(a *nntp.Account) (*nntp.Conn, error) {
+	if p.Bulk {
+		return nntp.DialBulk(a, DialTimeout)
+	}
 	return nntp.Dial(a, DialTimeout)
 }
 
 func (p *Pool) Put(c *nntp.Conn) {
+	if c.Yield() { // something else is waiting for a connection: hand this one back
+		c.Close()
+		return
+	}
 	p.mu.Lock()
 	p.idle[c.Account] = append(p.idle[c.Account], idleConn{c, time.Now()})
 	p.mu.Unlock()

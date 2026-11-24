@@ -1108,6 +1108,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	j.mu.Unlock()
 	m.SaveState()
 	pool := engine.NewPool(accts)
+	pool.Bulk = true // all running downloads share each provider's connections, and give way to previews and checks
 	defer pool.Close()
 	jlog := m.jobLog(j)
 	type bad struct{ name, why string }

@@ -1490,7 +1490,7 @@ function providerDialog(a, onSave) {
     h("div", { class: "form" }, field("Priority", f.priority, PRIORITY_HELP), field("Name", f.name), field("Enabled", enSw)));
   modal({ title: isNew ? "Add a Usenet provider" : `Edit ${a.name || a.server}`, body: h("div", { class: "form" },
     field("Server", f.server), field("Port", f.port), field("SSL", sslSw, "Encrypted connection; most providers use port 563 for it."),
-    field("Username", f.username), field("Password", f.password), field("Connections", f.connections, "As many as your plan allows; keep the total across providers within each plan."),
+    field("Username", f.username), field("Password", f.password), field("Connections", f.connections, "As many as your plan allows (Easynews: 60). usnfetch never opens more than this at once, across every download, preview and check: downloads use them all and hand a few back while you preview or check something."),
     more, h("div", { class: "full" }, result)),
   actions: [{ label: "Test connection", run: async () => {
     result.textContent = "connecting…"; result.className = "muted";
@@ -1783,7 +1783,7 @@ async function pageSettings() {
     h("details", { class: "more" }, h("summary", {}, "Advanced"),
       h("div", { class: "form" },
         ...field("Missing-article retries", d.missing_retries, "Retry passes (1, 2, 3… minutes apart) for articles missing on every account."),
-        ...field("Streaming connections", d.stream_connections, "Used when opening files straight from Usenet in the browser, on top of download connections."),
+        ...field("Streaming connections", d.stream_connections, "At most this many of the provider's connections play files straight from Usenet in the browser; downloads hand them over while you watch."),
         h("label", { class: "k" }, "Share index folder"), h("div", { class: "inline nowrap-row" }, d.index_dir, browseBtn(d.index_dir)), h("div", { class: "help" }, "Where each share's index is kept once opened. Shares don't change, so nothing here expires by age."),
         ...field("Full indexes, up to (GB)", d.index_cache_gb, "Downloads, previews and checks use a share's full index (about 100 MB per TB of share). Past this much, the ones used least recently are cut down to their file list, which is zipped and kept, so browsing stays instant; the rest is fetched again when needed. 0 keeps only file lists for shares not in use."),
         h("label", { class: "k" }, "7-Zip"), d.sevenzip_path, tools.sevenzip_path,

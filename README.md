@@ -43,6 +43,10 @@ Every provider gets a priority, the same idea as in SABnzbd: 0 is the highest. P
 share the top priority all download together. One with a lower priority (a bigger number) is only
 asked for articles the others are missing, which is what you want for a block account.
 
+Give each provider the full number of connections your plan allows (Easynews allows 60). usnfetch
+never opens more than that at once, however many downloads run side by side. Downloads use all of
+them, and hand a few back for as long as you're previewing or checking a share.
+
 ### Adding shares
 
 usnfetch opens the share links you already have. There are three ways in:

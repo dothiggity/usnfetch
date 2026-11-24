@@ -283,8 +283,16 @@ func (p *PackFetcher) pass(pids []int64, st *Stats) []int64 {
 					err = p.one(c, pid, st)
 				}
 				switch {
+				case errors.Is(err, nntp.ErrBusy): // every connection is taken: just try again
+					mu.Lock()
+					queue = append(queue, pid)
+					mu.Unlock()
 				case err == nil:
 					backoff = time.Second
+					if c.Yield() { // something else is waiting for a connection
+						c.Close()
+						c = nil
+					}
 				case errors.Is(err, errStopped): // stopped while waiting for the speed limit
 					mu.Lock()
 					queue = append(queue, pid)

@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -43,6 +45,9 @@ type Conn struct {
 	c       net.Conn
 	r       *bufio.Reader
 	timeout time.Duration
+	bud     *budget // its place in the account's connection budget (budget.go)
+	bulk    bool    // a download's connection: gives way to other uses (Yield)
+	closed  sync.Once
 }
 
 // LoginError: the server turned the username or password down.
@@ -71,8 +76,37 @@ func dialErr(a *Account, err error) error {
 	return fmt.Errorf("can't connect to %s on port %d: %v", a.Server, a.Port, err)
 }
 
-// Dial connects, reads the greeting and logs in.
-func Dial(a *Account, timeout time.Duration) (*Conn, error) {
+// Dial connects, reads the greeting and logs in, within the account's connection budget
+// (waiting up to OtherWait for a place; downloads give way meanwhile).
+func Dial(a *Account, timeout time.Duration) (*Conn, error) { return dialIn(a, timeout, false) }
+
+// DialBulk is Dial for a download: it may take the whole budget but gives way to anything
+// else, waiting up to BulkWait for a place (ErrBusy after that: retry).
+func DialBulk(a *Account, timeout time.Duration) (*Conn, error) { return dialIn(a, timeout, true) }
+
+func dialIn(a *Account, timeout time.Duration, bulk bool) (*Conn, error) {
+	b, wait := budgetOf(a), OtherWait
+	if bulk {
+		wait = BulkWait
+	}
+	if !b.acquire(bulk, wait) {
+		return nil, fmt.Errorf("%w (%s: %d)", ErrBusy, a.Label(), max(1, a.Connections))
+	}
+	c, err := connect(a, timeout)
+	if err != nil {
+		b.release()
+		return nil, err
+	}
+	c.bud, c.bulk = b, bulk
+	runtime.SetFinalizer(c, (*Conn).Close) // a connection dropped without Close still gives its place back
+	return c, nil
+}
+
+// Yield: a download's connection that should be handed back now, because something else is
+// waiting for a place in the budget.
+func (c *Conn) Yield() bool { return c.bulk && c.bud != nil && c.bud.wanted() }
+
+func connect(a *Account, timeout time.Duration) (*Conn, error) {
 	addr := net.JoinHostPort(a.Server, fmt.Sprint(a.Port))
 	raw, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
@@ -197,9 +231,15 @@ func (c *Conn) readBlock() ([]byte, error) {
 
 // Close sends QUIT and closes the socket.
 func (c *Conn) Close() {
-	_ = c.c.SetDeadline(time.Now().Add(2 * time.Second))
-	_, _ = c.c.Write([]byte("QUIT\r\n"))
-	c.c.Close()
+	c.closed.Do(func() {
+		runtime.SetFinalizer(c, nil)
+		_ = c.c.SetDeadline(time.Now().Add(2 * time.Second))
+		_, _ = c.c.Write([]byte("QUIT\r\n"))
+		c.c.Close()
+		if c.bud != nil {
+			c.bud.release()
+		}
+	})
 }
 
 // IsConnErr: the connection is unusable (as opposed to a missing article).

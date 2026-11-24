@@ -294,7 +294,11 @@ func (e *Engine) worker(id int, f *os.File, acct *nntp.Account, st *Stats, wg *s
 			continue
 		}
 		if conn == nil {
-			if conn, err = e.Pool.Get(acct); err != nil {
+			if conn, err = e.Pool.Get(acct); errors.Is(err, nntp.ErrBusy) {
+				conn = nil
+				e.queue.put(i) // every connection is taken (other downloads, a preview): just try again
+				continue
+			} else if err != nil {
 				conn = nil
 				st.Errors.Add(1)
 				e.queue.put(i)
@@ -350,6 +354,10 @@ func (e *Engine) worker(id int, f *os.File, acct *nntp.Account, st *Stats, wg *s
 		}
 		e.bitmap.Mark(i)
 		st.Add(int64(len(data)))
+		if conn.Yield() { // a preview or a check is waiting for a connection: give this one back
+			conn.Close()
+			conn = nil
+		}
 	}
 }
 
