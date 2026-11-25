@@ -98,53 +98,85 @@ func prep(title string) prepped {
 	return prepped{w, alt}
 }
 
-// tokenScore: how well one word of a search matches a title: 3 a whole word (or an
-// abbreviation: "smb3", "sm64", "loz"), 2 the start of a word ("3" in "3D"), 0 not at all.
-func tokenScore(tok string, p prepped) int {
-	best := 0
+// tokenMatch: how well one word of a search matches a title (in hundredths), and which of the
+// title's words it stands for (from, to): 300 a whole word, 200 the start of a word ("3" in
+// "3D"), a little over 300 an abbreviation, standing for all the words it abbreviates ("smb3":
+// Super Mario Bros. 3, above an arcade set named smb3); 0 not at all.
+func tokenMatch(tok string, p prepped) (score, from, to int) {
+	pre := -1
 	for i, w := range p.words {
 		if w == tok || p.alt[i] == tok {
-			return 3
+			return 300, i, i + 1
 		}
-		if strings.HasPrefix(w, tok) || (p.alt[i] != "" && strings.HasPrefix(p.alt[i], tok)) {
-			best = 2
+		if pre < 0 && (strings.HasPrefix(w, tok) || (p.alt[i] != "" && strings.HasPrefix(p.alt[i], tok))) {
+			pre = i
 		}
 	}
-	if best == 0 && abbreviates(tok, p) {
-		return 3
+	if pre >= 0 {
+		return 200, pre, pre + 1
 	}
-	return best
+	if from, to, ok := abbreviates(tok, p); ok {
+		return 300 + 5*(to-from-1), from, to
+	}
+	return 0, 0, 0
+}
+
+// stopWords: small words a search may leave out without it counting against the title.
+var stopWords = map[string]bool{"the": true, "of": true, "a": true, "an": true, "and": true, "in": true, "on": true, "to": true, "for": true}
+
+// titleScore: how well a search (its words, from TitleKey) matches a title, in hundredths;
+// ok is false unless every word of the search matches. The title's words the search leaves
+// out count against it, so the closer the title the higher: for "mario 3", Mario Party 3
+// above Mario Hoops 3 on 3, and for "smb3", Super Mario Bros. 3 above Super Mario Advance 4.
+func titleScore(toks []string, p prepped) (score int, ok bool) {
+	var covered uint64
+	for _, t := range toks {
+		s, from, to := tokenMatch(t, p)
+		if s == 0 {
+			return 0, false
+		}
+		score += s
+		for i := from; i < to && i < 64; i++ {
+			covered |= 1 << i
+		}
+	}
+	for i, w := range p.words {
+		if (i >= 64 || covered&(1<<i) == 0) && !stopWords[w] {
+			score -= 30
+		}
+	}
+	return score, true
 }
 
 // abbreviates: tok is the first letters of words in a row, then maybe the number after them:
 // "smb3" Super Mario Bros. 3, "sm64" Super Mario 64, "ff7" Final Fantasy VII, "loz" (The)
-// Legend of Zelda.
-func abbreviates(tok string, p prepped) bool {
+// Legend of Zelda. from and to are the words it stands for.
+func abbreviates(tok string, p prepped) (from, to int, ok bool) {
 	i := len(tok)
 	for i > 0 && tok[i-1] >= '0' && tok[i-1] <= '9' {
 		i--
 	}
 	letters, digits := tok[:i], tok[i:]
 	if len(letters) < 2 {
-		return false
+		return 0, 0, false
 	}
 	n := len(letters)
 	for st := 0; st+n <= len(p.words); st++ {
-		ok := true
-		for k := 0; k < n && ok; k++ {
-			ok = p.words[st+k][0] == letters[k]
+		match := true
+		for k := 0; k < n && match; k++ {
+			match = p.words[st+k][0] == letters[k]
 		}
-		if !ok {
+		if !match {
 			continue
 		}
 		if digits == "" {
-			return true
+			return st, st + n, true
 		}
 		if st+n < len(p.words) && (p.words[st+n] == digits || p.alt[st+n] == digits) {
-			return true
+			return st, st + n + 1, true
 		}
 	}
-	return false
+	return 0, 0, false
 }
 
 // ---- the game lists in memory -----------------------------------------------------------
@@ -231,7 +263,39 @@ type gameHit struct {
 	Title  string      `json:"title"`
 	System string      `json:"system"`
 	Builds []gameBuild `json:"builds"`
-	score  float64
+	score  int         // titleScore, then rankGames' adjustments
+	key    string      // the title's words (TitleKey)
+	words  int
+}
+
+// rankGames: the best matches first. A game more of the builds have ranks a little higher
+// (the well-known ones), though never above a closer title; a hack well below the games it
+// hacks, and below the near misses ("mario 3": Super Mario 3D World). Equal ones go
+// shorter title first ("Super Mario Bros. 3" before "Mario Hoops 3 on 3"), then by name and
+// system (the NES game before the Wii one of the same name).
+func rankGames(out []*gameHit) {
+	for _, h := range out {
+		h.score += min(75, 25*(len(h.Builds)-1))
+		if strings.Contains(strings.ToLower(h.System+" "+h.Title), "hack") {
+			h.score -= 200
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		if len(a.Builds) != len(b.Builds) {
+			return len(a.Builds) > len(b.Builds)
+		}
+		if a.words != b.words {
+			return a.words < b.words
+		}
+		if a.key != b.key {
+			return a.key < b.key
+		}
+		return a.System < b.System
+	})
 }
 
 // knownShares: every share usnfetch knows the link of (catalog, or opened by its link).
@@ -267,11 +331,13 @@ func (s *Server) gameRoutes() {
 		t0 := time.Now()
 		groups := map[string]*gameHit{}
 		builds := 0
+		seen := map[string]bool{} // a share opened from the catalog and by its link: once
 		for _, c := range s.knownShares() {
 			l, err := share.ParseLink(c.link)
-			if err != nil {
+			if err != nil || seen[l.FolderID] {
 				continue
 			}
+			seen[l.FolderID] = true
 			p := s.gamesFile(l.FolderID)
 			if p == "" {
 				continue
@@ -284,24 +350,15 @@ func (s *Server) gameRoutes() {
 			id := app.LinkID(c.link)
 			for i, g := range set.games {
 				pp := set.prep[i]
-				score := 0.0
-				for _, t := range toks {
-					ts := tokenScore(t, pp)
-					if ts == 0 {
-						score = 0
-						break
-					}
-					score += float64(ts)
-				}
-				if score == 0 {
+				score, ok := titleScore(toks, pp)
+				if !ok {
 					continue
 				}
-				score -= 0.15 * float64(max(0, len(pp.words)-len(toks))) // the closer the title, the higher
-				k := g.System + "\x00" + strings.Join(pp.words, " ")
-				h := groups[k]
+				key := strings.Join(pp.words, " ")
+				h := groups[g.System+"\x00"+key]
 				if h == nil {
-					h = &gameHit{Title: g.Title, System: g.System, score: score}
-					groups[k] = h
+					h = &gameHit{Title: g.Title, System: g.System, score: score, key: key, words: len(pp.words)}
+					groups[g.System+"\x00"+key] = h
 				}
 				b := gameBuild{ID: id, CatalogID: c.catalogID, Title: c.title, Folder: g.Folder, Name: g.Name, Size: g.Size}
 				if c.catalogID == "" {
@@ -319,25 +376,9 @@ func (s *Server) gameRoutes() {
 		out := make([]*gameHit, 0, len(groups))
 		for _, h := range groups {
 			sort.Slice(h.Builds, func(i, j int) bool { return h.Builds[i].Title < h.Builds[j].Title })
-			// what more of the builds have ranks higher (the well-known games); hacks lower
-			h.score += min(1.5, 0.4*float64(len(h.Builds)-1))
-			if strings.Contains(strings.ToLower(h.System+" "+h.Title), "hack") {
-				h.score--
-			}
 			out = append(out, h)
 		}
-		sort.Slice(out, func(i, j int) bool {
-			if out[i].score != out[j].score {
-				return out[i].score > out[j].score
-			}
-			if len(out[i].Builds) != len(out[j].Builds) {
-				return len(out[i].Builds) > len(out[j].Builds)
-			}
-			if out[i].Title != out[j].Title {
-				return out[i].Title < out[j].Title
-			}
-			return out[i].System < out[j].System
-		})
+		rankGames(out)
 		total := len(out)
 		if len(out) > limit {
 			out = out[:limit]

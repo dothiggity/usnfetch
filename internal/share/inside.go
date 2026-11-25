@@ -29,6 +29,7 @@ var notGame = map[string]bool{
 	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".bmp": true, ".webp": true, ".svg": true, ".ico": true,
 	".mp4": true, ".mkv": true, ".avi": true, ".webm": true, ".mov": true, ".mp3": true, ".ogg": true, ".wav": true, ".flac": true,
 	".pcm": true, // MSU-1 soundtracks (the game is its .sfc and .msu)
+	".old": true, ".bak": true,
 }
 
 // mediaDir: subfolders of a system folder that hold artwork and the like, not games.
@@ -141,6 +142,8 @@ var sameSystem = map[string]string{
 	"atarist": "Atari ST", "atari st": "Atari ST", "atari800": "Atari 800", "atari 800": "Atari 800",
 	"pcfx": "PC-FX", "nec pc-fx": "PC-FX", "pc88": "PC-88", "nec pc-8801": "PC-88", "pc98": "PC-98", "nec pc-9801": "PC-98",
 	"x68000": "X68000", "sharp x68000": "X68000", "cdi": "CD-i", "philips cd-i": "CD-i", "arcade": "Arcade",
+	"flash": "Flash", "flash games": "Flash", "adobe flash": "Flash", "easyrpg": "EasyRPG",
+	"fpinball": "Future Pinball", "future pinball": "Future Pinball", "megadrive-msu": "Mega Drive MSU-1", "md-msu": "Mega Drive MSU-1",
 }
 
 // Game is one game of a build: the files of one title in one system folder (its disc
@@ -158,14 +161,33 @@ var tagRE = regexp.MustCompile(`\s*[\(\[][^\)\]]*[\)\]]`)
 // GameTitle: a ROM file's (or game folder's) name as people know the game: without its file
 // type and the tags dump sets add ("(USA)", "(Rev 1)", "(Disc 2)", "(Track 3)", "[!]").
 func GameTitle(name string) string {
-	if ext := path.Ext(name); ext != "" && len(ext) <= 6 && !strings.ContainsAny(ext, " ()[]") {
-		name = strings.TrimSuffix(name, ext)
+	if ext := path.Ext(name); ext != "" && (len(ext) <= 6 && !strings.ContainsAny(ext, " ()[]") || len(ext) <= 9 && alnum(ext[1:])) {
+		name = strings.TrimSuffix(name, ext) // ".easyrpg" too
+	}
+	if !strings.Contains(name, " ") && strings.Count(name, ".")+strings.Count(name, "_") >= 2 {
+		// a scene-style name ("Super.Mario.3D.World.USA"): its words, without the region
+		w := strings.FieldsFunc(name, func(r rune) bool { return r == '.' || r == '_' })
+		for len(w) > 1 && sceneRegion[strings.ToLower(w[len(w)-1])] {
+			w = w[:len(w)-1]
+		}
+		name = strings.Join(w, " ")
 	}
 	t := strings.Join(strings.Fields(tagRE.ReplaceAllString(name, "")), " ")
 	if t == "" {
 		return name
 	}
 	return t
+}
+
+var sceneRegion = map[string]bool{"usa": true, "eur": true, "europe": true, "jpn": true, "japan": true, "pal": true, "ntsc": true}
+
+func alnum(s string) bool {
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // TitleKey: a title folded for comparing and searching: lower case, no accents, "&" as "and",
