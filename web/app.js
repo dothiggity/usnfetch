@@ -509,7 +509,7 @@ async function pageCatalog() {
   const sel = new Set();
   const view = $("#view");
 
-  const q = h("input", { class: "input", placeholder: "Search titles, sources, SKUs…", value: f.q, oninput: () => { f.q = q.value; store.set("cat.q", f.q); render(); } });
+  const q = h("input", { class: "input", placeholder: "Search titles, sources…", value: f.q, oninput: () => { f.q = q.value; store.set("cat.q", f.q); render(); } });
   const src = h("select", { class: "input", onchange: () => { f.source = src.value; store.set("cat.source", f.source); render(); } });
   // launcher (Batocera, RetroBat, LaunchBox…) and device (PC, Steam Deck, Raspberry Pi 5…), read
   // from the titles and labels by the server. Device values: a device, "g:<group>", or "-" (none named)
@@ -758,14 +758,50 @@ function insideLine(sys) {
 }
 
 // ---------------------------------------------------------------- search
-// Search what's in every share opened before. Games first, one row per game and system with the
-// builds that have it ("mario 3": Super Mario Bros. 3 · NES · in 3 builds); then, on request or
-// when no game matches, the files and folders that match, share by share.
+// Search what's in every share opened before, games or BIOS files. Games: one row per game and
+// system with the builds that have it ("mario 3": Super Mario Bros. 3 · NES · in 3 builds).
+// BIOS files: by console and region ("ps1 bios usa": scph1001.bin, scph5501.bin…). Clicking
+// a name downloads it in the browser when it is one file and not big; anything bigger goes to
+// the download queue. Files and folders that match: on request, or when nothing else does.
+const BROWSER_MAX = 1024 ** 3;   // a game bigger than this, or of more than one file, goes to the download queue
+const pickBuild = (builds) => builds.find((b) => b.full) || builds[0];   // one whose index is cached starts right away
+const openBody = (b) => (b.link ? { link: b.link } : { catalog_id: b.catalog_id || b.id });
+
+// ensureFull: a share opened from its saved file list fetches the rest of its index first
+// (streaming a file needs it), with a small dialog while it does; resolves the share, or null.
+async function ensureFull(s, title) {
+  if (!s.list_only) return s;
+  try { s = await api(`/shares/${s.id}/fetch`, { body: {} }); } catch (e) { fail(e); return null; }
+  if (!s.list_only) return s;
+  return new Promise((resolve) => {
+    let done = false, t = null;
+    const finish = (v) => { if (done) return; done = true; clearInterval(t); close(); resolve(v); };
+    const close = modal({ title: "One moment", body: h("div", { class: "muted" }, h("span", { class: "spin" }), " Fetching the rest of the index of ", h("b", {}, title),
+      " first: only its file list was saved. Big shares take a minute or two. The download starts by itself."), actions: [{ label: "Cancel" }], onclose: () => finish(null) });
+    t = setInterval(async () => {
+      let x; try { x = await api("/shares/" + s.id); } catch (e) { fail(e); finish(null); return; }
+      if (x.fetching) return;
+      finish(x.list_only ? null : x);
+      if (x.list_only) modal({ title: "Couldn't fetch the index", body: h("div", { class: "note bad" }, cap(x.fetch_error || "it stopped")), actions: [{ label: "Close", kind: "primary" }] });
+    }, 1200);
+  });
+}
+
+// browserGet: hand one file of an open share to the browser's own downloads.
+function browserGet(s, fid) {
+  const a = h("a", { href: `/api/shares/${s.id}/file/${fid}?download=1`, download: "" });
+  document.body.append(a); a.click(); a.remove();
+}
+
 async function pageSearch() {
   setTitle("Search");
-  const q = h("input", { class: "input", type: "search", placeholder: "A game, a series, a system, a BIOS… (\"mario 3\", \"smb3\", \"ff7\", \"scph1001\")", value: store.get("search.q", "") });
+  const hints = { games: "A game or series (\"mario 3\", \"smb3\", \"ff7\")", bios: "A console and region (\"ps1 bios usa\", \"saturn bios\", \"scph5501\")" };
+  let mode = store.get("search.mode", "games") === "bios" ? "bios" : "games";
+  const q = h("input", { class: "input", type: "search", placeholder: hints[mode], value: store.get("search.q", "") });
+  const modeSel = h("select", { class: "input mode", title: "What to search for" },
+    [["games", "Games"], ["bios", "BIOS"]].map(([v, l]) => h("option", { value: v, selected: v === mode }, l)));
   const note = h("div", { class: "countline" });
-  const gamesBox = h("div", { class: "search-results" });
+  const resultsBox = h("div", { class: "search-results" });
   const filesBox = h("div", { class: "search-results" });
   let timer = null, seq = 0;
   const go = (b, folder) => {
@@ -773,33 +809,86 @@ async function pageSearch() {
     location.hash = `#/share/${b.id}` + (folder ? "/" + folder.split("/").map(encodeURIComponent).join("/") : "");
   };
   const short = (t, n = 38) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+  const busy = async (el, f) => { el.classList.add("busy"); if ("disabled" in el) el.disabled = true; try { await f(); } catch (e) { fail(e); } finally { el.classList.remove("busy"); if ("disabled" in el) el.disabled = false; } };
 
-  // download one game from one build: open the build (cached: a moment), find all of the
-  // game's files there (discs, tracks, regions), then the usual review
-  async function download(g, b, btn) {
-    btn.disabled = true;
-    try {
-      const s = await prepareShare(b.link ? { link: b.link } : { catalog_id: b.catalog_id || b.id }, b.title);
-      if (!s) return;
-      const r = await api(`/shares/${s.id}/game?folder=${encodeURIComponent(b.folder)}&name=${encodeURIComponent(b.name)}`);
-      const label = `${g.title} (${g.system})`;
-      await reviewDownload(s, { paths: r.paths, folders: r.folders }, null, { label, title: "Download " + label,
-        picked: r.items.map((it) => [it.path, { folder: it.folder, count: it.count, size: it.size }]) });
-    } catch (e) { fail(e); }
-    finally { btn.disabled = false; }
+  // ---- games
+  // the download queue, through the usual review: everything of the game in that build
+  // (its discs, tracks, regions)
+  async function queueGame(g, b) {
+    const s = await prepareShare(openBody(b), b.title);
+    if (!s) return;
+    const r = await api(`/shares/${s.id}/game?folder=${encodeURIComponent(b.folder)}&name=${encodeURIComponent(b.name)}`);
+    const label = `${g.title} (${g.system})`;
+    await reviewDownload(s, { paths: r.paths, folders: r.folders }, null, { label, title: "Download " + label,
+      picked: r.items.map((it) => [it.path, { folder: it.folder, count: it.count, size: it.size }]) });
+  }
+  const small = (b) => (b.count || 1) === 1 && b.size <= BROWSER_MAX;
+  // the game's name: straight to the browser when it is one file and not big, else the queue
+  async function getGame(g) {
+    const b = pickBuild(g.builds);
+    if (!small(b)) return queueGame(g, b);
+    const s = await prepareShare(openBody(b), b.title);
+    if (!s) return;
+    const r = await api(`/shares/${s.id}/game?folder=${encodeURIComponent(b.folder)}&name=${encodeURIComponent(b.name)}`);
+    const it = r.items[0];
+    if (r.items.length !== 1 || it.folder || r.size > BROWSER_MAX) return queueGame(g, b);   // not one small file after all
+    const full = await ensureFull(s, b.title);
+    if (!full) return;
+    browserGet(full, it.fid);
+    toast(`Downloading ${it.name} (${fmtBytes(it.size)}) in your browser`, "ok");
   }
 
-  const gameRow = (g) => h("div", { class: "gm-row" },
-    h("div", { class: "gm-t" }, h("b", {}, g.title), h("span", { class: "chip plain" }, g.system)),
-    h("div", { class: "gm-b" }, h("span", { class: "faint small" }, `in ${g.builds.length} build${g.builds.length === 1 ? "" : "s"}:`),
-      g.builds.map((b) => {
-        const dl = h("button", { class: "dl", type: "button", title: `Download ${g.title} from ${b.title}`, "aria-label": `Download from ${b.title}`,
-          onclick: (ev) => { ev.preventDefault(); download(g, b, dl); } }, icon("download"));
-        return h("span", { class: "gm-bld" },
-          h("a", { class: "chip plain sys", href: "#", title: `Open ${b.title} here\n${b.folder}/${b.name}`, onclick: (ev) => { ev.preventDefault(); go(b, b.folder); } },
-            short(b.title), b.size ? h("span", { class: "faint" }, " " + fmtBytes(b.size)) : null), dl);
-      })));
+  // a build that has it: open the build there, or the arrow: the download queue
+  const buildChip = (b, label, queue) => {
+    const dl = h("button", { class: "dl", type: "button", title: `Download ${label} from ${b.title} through the download queue`, "aria-label": `Queue from ${b.title}`,
+      onclick: (ev) => { ev.preventDefault(); busy(dl, queue); } }, icon("download"));
+    return h("span", { class: "gm-bld" },
+      h("a", { class: "chip plain sys", href: "#", title: `Open ${b.title} here\n${b.folder}/${b.name}`, onclick: (ev) => { ev.preventDefault(); go(b, b.folder); } },
+        short(b.title), b.size ? h("span", { class: "faint" }, " " + fmtBytes(b.size)) : null), dl);
+  };
 
+  const gameRow = (g) => {
+    const b = pickBuild(g.builds);
+    const direct = small(b);
+    const name = h("a", { class: "gm-name", href: "#", title: direct ? `Download ${b.name} (${fmtBytes(b.size)}) in your browser, from ${b.title}`
+      : `${(b.count || 1).toLocaleString()} file${(b.count || 1) === 1 ? "" : "s"}, ${fmtBytes(b.size)}: that goes through the download queue (from ${b.title})`,
+    onclick: (ev) => { ev.preventDefault(); busy(name, () => getGame(g)); } }, g.title);
+    return h("div", { class: "gm-row" },
+      h("div", { class: "gm-t" }, name, h("span", { class: "chip plain" }, g.system),
+        h("span", { class: "faint small" }, direct ? fmtBytes(b.size) : `${(b.count || 1) > 1 ? `${b.count.toLocaleString()} files · ` : ""}${fmtBytes(b.size)} · download queue`)),
+      h("div", { class: "gm-b" }, h("span", { class: "faint small" }, `in ${g.builds.length} build${g.builds.length === 1 ? "" : "s"}:`),
+        g.builds.map((x) => buildChip(x, g.title, () => queueGame(g, x)))));
+  };
+
+  // ---- BIOS files
+  async function getBios(x) {
+    const b = pickBuild(x.builds);
+    const s = await prepareShare(openBody(b), b.title);
+    if (!s) return;
+    const r = await api(`/shares/${s.id}/fileid?path=${encodeURIComponent(b.path)}`);
+    const full = await ensureFull(s, b.title);
+    if (!full) return;
+    browserGet(full, r.fid);
+    toast(`Downloading ${r.name} (${fmtBytes(r.size)}) in your browser`, "ok");
+  }
+  async function queueBios(x, b) {
+    const s = await prepareShare(openBody(b), b.title);
+    if (!s) return;
+    const label = x.label || x.name;
+    await reviewDownload(s, { paths: [b.path] }, null, { label, title: "Download " + label, picked: [[b.path, { size: b.size }]] });
+  }
+  const biosRow = (x) => {
+    const b = pickBuild(x.builds);
+    const name = h("a", { class: "gm-name", href: "#", title: `Download ${x.name} (${fmtBytes(x.size)}) in your browser, from ${b.title}`,
+      onclick: (ev) => { ev.preventDefault(); busy(name, () => getBios(x)); } }, x.label || x.name);
+    return h("div", { class: "gm-row" },
+      h("div", { class: "gm-t" }, name, x.system ? h("span", { class: "chip plain" }, x.system) : null, x.region ? h("span", { class: "chip plain" }, x.region) : null,
+        h("span", { class: "faint small mono" }, (x.label ? x.name + " · " : "") + fmtBytes(x.size))),
+      h("div", { class: "gm-b" }, h("span", { class: "faint small" }, `in ${x.builds.length} build${x.builds.length === 1 ? "" : "s"}:`),
+        x.builds.map((y) => buildChip(y, x.name, () => queueBios(x, y)))));
+  };
+
+  // ---- files and folders that match, share by share
   const card = (sh) => h("div", { class: "panel sr" },
     h("div", { class: "head" }, icon("folder"), h("h2", {}, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go(sh, ""); } }, sh.title)), h("span", { class: "grow" }),
       h("span", { class: "muted small" }, `${sh.files.toLocaleString()} file${sh.files === 1 ? "" : "s"}` + (sh.folders ? ` · ${sh.folders.toLocaleString()} folder${sh.folders === 1 ? "" : "s"}` : ""))),
@@ -810,7 +899,6 @@ async function pageSearch() {
       sh.files + sh.folders > sh.hits.length ? h("div", { class: "faint small", style: { marginTop: "6px" } },
         `…and ${(sh.files + sh.folders - sh.hits.length).toLocaleString()} more: `, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go(sh, ""); } }, "open the share"), " and search there for all of them.") : null));
 
-  // the files and folders that match, share by share
   async function searchFiles(v, my) {
     put(filesBox, h("div", { class: "countline" }, h("span", { class: "spin" }), " Searching the files of every opened share…"));
     let r;
@@ -831,23 +919,29 @@ async function pageSearch() {
     const my = ++seq;
     put(filesBox);
     if ([...v].length < 2) {
-      put(note, v ? "Type at least two letters." : "Searches every share you've opened before: games by name or abbreviation, and any file or folder. Shares you haven't opened aren't known yet.");
-      put(gamesBox); return;
+      put(note, v ? "Type at least two letters." : mode === "bios"
+        ? "Searches the BIOS folders of every build you've opened before, by console and region. Click a name to download it in your browser."
+        : "Searches every build you've opened before, by name or abbreviation. Click a game's name to download it: in your browser when it's one file, through the download queue when it's bigger.");
+      put(resultsBox); return;
     }
     put(note, h("span", { class: "spin" }), " Searching…");
     let r;
-    try { r = await api("/search/games?q=" + encodeURIComponent(v)); }
+    try { r = await api(`/search/${mode}?q=` + encodeURIComponent(v)); }
     catch (e) { if (my === seq) put(note, h("span", { class: "bad-text" }, cap(e.message))); return; }
     if (my !== seq) return;
+    const list = mode === "bios" ? r.bios : r.games;
+    const what = mode === "bios" ? ["BIOS file", "BIOS files", "with BIOS files"] : ["game", "games", "with a game list"];
     const filesBtn = h("button", { class: "btn sm", onclick: () => { filesBtn.remove(); searchFiles(v, my); } }, icon("file"), "Search files and folders too");
-    put(note, r.games.length ? `${r.total.toLocaleString()} game${r.total === 1 ? "" : "s"} in the ${r.builds} build${r.builds === 1 ? "" : "s"} with a game list` + (r.total > r.games.length ? ` (the best ${r.games.length} shown)` : "") : `No game matches in the ${r.builds} build${r.builds === 1 ? "" : "s"} with a game list.`,
-      h("span", { class: "faint" }, ` · ${r.ms} ms`));
-    put(gamesBox, r.games.length ? [h("div", { class: "panel gm" }, h("div", { class: "body" }, r.games.map(gameRow))), h("div", {}, filesBtn)] : null);
-    if (!r.games.length) searchFiles(v, my);   // nothing by game name: maybe a BIOS, a document…
+    put(note, list.length ? `${r.total.toLocaleString()} ${r.total === 1 ? what[0] : what[1]} in the ${r.builds} build${r.builds === 1 ? "" : "s"} ${what[2]}` + (r.total > list.length ? ` (the best ${list.length} shown)` : "")
+      : `No ${what[0]} matches in the ${r.builds} build${r.builds === 1 ? "" : "s"} ${what[2]}.`,
+    h("span", { class: "faint" }, ` · ${r.ms} ms`));
+    put(resultsBox, list.length ? [h("div", { class: "panel gm" }, h("div", { class: "body" }, list.map(mode === "bios" ? biosRow : gameRow))), h("div", {}, filesBtn)] : null);
+    if (!list.length) searchFiles(v, my);   // nothing by name: maybe a document, a folder…
   }
+  modeSel.addEventListener("change", () => { mode = modeSel.value; store.set("search.mode", mode); q.placeholder = hints[mode]; run(); q.focus(); });
   q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 350); });
   q.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { clearTimeout(timer); run(); } });
-  $("#view").append(h("div", { class: "search-page" }, h("div", { class: "search big" }, icon("search"), q), note, gamesBox, filesBox));
+  $("#view").append(h("div", { class: "search-page" }, h("div", { class: "search-bar" }, modeSel, h("div", { class: "search big" }, icon("search"), q)), note, resultsBox, filesBox));
   q.focus();
   run();
 }

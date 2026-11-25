@@ -186,6 +186,14 @@ table.t td.act { width: 1%; white-space: nowrap; text-align: right; }
 .gm-t { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .gm-t b { font-size: 14.5px; }
 .gm-b { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* the search bar: what to search for, then the words */
+.search-bar { display: flex; gap: 8px; align-items: stretch; }
+.search-bar .search { flex: 1; min-width: 0; }
+.search-bar select.mode { width: auto; height: 44px; flex: none; font-weight: 600; }
+/* a game's (or BIOS file's) name: click to download it */
+.gm-name { font-weight: 700; font-size: 14.5px; color: var(--text); cursor: pointer; }
+.gm-name:hover, .gm-name:focus-visible { color: var(--accent); text-decoration: underline; }
+.gm-name.busy { opacity: .6; cursor: progress; }
 /* a build that has the game: open it there, or download the game from it */
 .gm-bld { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
 .gm-bld:hover, .gm-bld:focus-within { border-color: var(--accent); }

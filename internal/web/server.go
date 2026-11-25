@@ -59,8 +59,9 @@ type Server struct {
 	pool      *engine.Pool
 	sem       chan struct{}
 	mux       *http.ServeMux
-	lc        linkChecks // link checks of catalog entries
-	games     gameCache  // game lists for the game search (games.go)
+	lc        linkChecks         // link checks of catalog entries
+	games     listCache[gameSet] // game lists for the game search (games.go)
+	bios      listCache[biosSet] // BIOS lists for the BIOS search (bios.go)
 }
 
 type session struct {
@@ -706,6 +707,7 @@ func (s *Server) routes() {
 	s.revealRoutes()
 	s.searchRoutes()
 	s.gameRoutes()
+	s.biosRoutes()
 
 	// shares
 	s.api("POST /api/shares/open", func(w http.ResponseWriter, r *http.Request) (any, error) {

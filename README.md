@@ -73,15 +73,22 @@ the build's ROM folders, leaving out artwork, game lists and the extra tracks of
 Searching the catalog for a system finds the builds that have it, and on a build's page each
 system is a chip that opens its folder.
 
-**Search** looks inside every share you've opened at once, game first. Type "mario 3" and you get
-one line per game and system: *Super Mario Bros. 3 · NES*, *Mario Party 3 · Nintendo 64*, *Super
-Mario 3D World · Switch*. Each line lists the builds that have it. Click a build to open it at the
-game's folder, or the arrow next to it to download the game right there: all of its discs or
-tracks, through the same review as any other download. Regions, discs and the many names one
-console goes by ("NES", "Nintendo Entertainment System") are folded together, and the closest
-titles come first. Abbreviations and Roman numerals work too: "smb3", "sm64", "ff7", "zelda 2".
-Across about 180,000 games it answers in a few milliseconds. For anything that isn't a game,
-like "scph1001", it searches every file and folder instead, which takes under a second.
+**Search** looks inside every build you've opened at once, for games or for BIOS files (pick
+which next to the search box). Type "mario 3" and you get one line per game and system: *Super
+Mario Bros. 3 · NES*, *Mario Party 3 · Nintendo 64*, *Super Mario 3D World · Switch*. Regions,
+discs and the many names one console goes by ("NES", "Nintendo Entertainment System") are folded
+together, and the closest titles come first. Abbreviations and Roman numerals work too: "smb3",
+"sm64", "ff7", "zelda 2". Across about 180,000 games it answers in a few milliseconds.
+
+Click a game's name to download it. A game that's one file of up to 1 GB goes straight to your
+browser's downloads. Anything bigger, or a game of several discs or tracks, goes through the
+download queue with the usual review. Each line also lists the builds that have the game: click
+one to open it at the game's folder, or the arrow next to it to queue the game from that build.
+
+BIOS files are known by their names and by the folders they're in, so "ps1 bios usa" finds
+scph1001.bin and scph5501.bin, and "ps2 bios europe", "sega cd bios" or "scph5501" work too. Click
+one to download it in the browser. For anything else, "Search files and folders too" looks
+through every file and folder, which takes under a second.
 
 The Opened column keeps track of what you've already looked at. "Cached" means the share's full
 index is on disk, so it opens in seconds and previews start right away. A share that only has its

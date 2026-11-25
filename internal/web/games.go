@@ -3,8 +3,10 @@ package web
 import (
 	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,23 +29,41 @@ func (s *Server) gamesFile(folderID string) string {
 	return filepath.Join(s.M.DataDir, "games", folderID+".json.gz")
 }
 
-// saveInside works out a build's systems and games from its open index and keeps them: the
-// systems with the share's details (info), the games in the build's games file.
+// biosFile: where a build's BIOS files (share.Bioses) are kept, next to its games.
+func (s *Server) biosFile(folderID string) string {
+	if p := s.gamesFile(folderID); p != "" {
+		return strings.TrimSuffix(p, ".json.gz") + ".bios.json.gz"
+	}
+	return ""
+}
+
+// saveInside works out a build's systems, games and BIOS files from its open index and keeps
+// them: the systems with the share's details (info), the games and BIOS files in files of
+// their own.
 func (s *Server) saveInside(ix *share.Index, info map[string]any) {
 	sys, games, err := ix.Games()
 	if err != nil || sys == nil {
 		sys, games = []share.System{}, nil
 	}
+	bios, _ := ix.Bioses()
 	info["inside"], info["inside_v"] = sys, insideVersion
 	folder, _ := ix.Info["folder_id"].(string)
 	if folder == "" {
 		folder, _ = info["folder_id"].(string)
 	}
-	p := s.gamesFile(folder)
-	if p == "" {
-		return
+	if p := s.gamesFile(folder); p != "" {
+		writeList(p, games)
+		s.games.forget(folder)
 	}
-	if len(games) == 0 {
+	if p := s.biosFile(folder); p != "" {
+		writeList(p, bios)
+		s.bios.forget(folder)
+	}
+}
+
+// writeList keeps a list as zipped JSON at p (an empty one: no file).
+func writeList[T any](p string, list []T) {
+	if len(list) == 0 {
 		_ = os.Remove(p)
 		return
 	}
@@ -54,7 +74,7 @@ func (s *Server) saveInside(ix *share.Index, info map[string]any) {
 		return
 	}
 	zw := gzip.NewWriter(f)
-	err = json.NewEncoder(zw).Encode(games)
+	err = json.NewEncoder(zw).Encode(list)
 	if cerr := zw.Close(); err == nil {
 		err = cerr
 	}
@@ -64,7 +84,6 @@ func (s *Server) saveInside(ix *share.Index, info map[string]any) {
 	if err != nil || os.Rename(tmp, p) != nil {
 		_ = os.Remove(tmp)
 	}
-	s.games.forget(folder)
 }
 
 // ---- matching ---------------------------------------------------------------------------
@@ -179,40 +198,38 @@ func abbreviates(tok string, p prepped) (from, to int, ok bool) {
 	return 0, 0, false
 }
 
-// ---- the game lists in memory -----------------------------------------------------------
+// ---- the lists in memory ----------------------------------------------------------------
 
-type gameSet struct {
-	mod   time.Time
-	games []share.Game
-	prep  []prepped
-}
-
-type gameCache struct {
+// listCache: the builds' lists (games, BIOS files) in memory by folder id, each read again
+// when its file changes. They go a few minutes after the last search (they take some memory).
+type listCache[T any] struct {
 	mu    sync.Mutex
-	sets  map[string]*gameSet // by folder id
+	sets  map[string]cachedList[T]
 	timer *time.Timer
 }
 
-func (c *gameCache) forget(folder string) {
+type cachedList[T any] struct {
+	mod time.Time
+	v   *T
+}
+
+func (c *listCache[T]) forget(folder string) {
 	c.mu.Lock()
 	delete(c.sets, folder)
 	c.mu.Unlock()
 }
 
-// load: a build's games (read again when its file changed), nil if it has none.
-func (c *gameCache) load(folder, p string) *gameSet {
+// load: a build's list, from its file at p by read; nil if it has none.
+func (c *listCache[T]) load(folder, p string, read func(io.Reader) (*T, error)) *T {
 	st, err := os.Stat(p)
 	if err != nil {
 		return nil
 	}
 	c.mu.Lock()
-	if c.sets == nil {
-		c.sets = map[string]*gameSet{}
-	}
-	g := c.sets[folder]
+	g, ok := c.sets[folder]
 	c.mu.Unlock()
-	if g != nil && g.mod.Equal(st.ModTime()) {
-		return g
+	if ok && g.mod.Equal(st.ModTime()) {
+		return g.v
 	}
 	f, err := os.Open(p)
 	if err != nil {
@@ -223,17 +240,15 @@ func (c *gameCache) load(folder, p string) *gameSet {
 	if err != nil {
 		return nil
 	}
-	g = &gameSet{mod: st.ModTime()}
-	if json.NewDecoder(zr).Decode(&g.games) != nil {
+	v, err := read(zr)
+	if err != nil {
 		return nil
 	}
-	g.prep = make([]prepped, len(g.games))
-	for i, x := range g.games {
-		g.prep[i] = prep(x.Title)
-	}
 	c.mu.Lock()
-	c.sets[folder] = g
-	// the lists go a few minutes after the last search (they take some memory)
+	if c.sets == nil {
+		c.sets = map[string]cachedList[T]{}
+	}
+	c.sets[folder] = cachedList[T]{st.ModTime(), v}
 	if c.timer != nil {
 		c.timer.Stop()
 	}
@@ -244,19 +259,40 @@ func (c *gameCache) load(folder, p string) *gameSet {
 		app.ReleaseMemory()
 	})
 	c.mu.Unlock()
-	return g
+	return v
+}
+
+type gameSet struct {
+	games []share.Game
+	prep  []prepped
+}
+
+func readGames(r io.Reader) (*gameSet, error) {
+	g := &gameSet{}
+	if err := json.NewDecoder(r).Decode(&g.games); err != nil {
+		return nil, err
+	}
+	g.prep = make([]prepped, len(g.games))
+	for i, x := range g.games {
+		g.prep[i] = prep(x.Title)
+	}
+	return g, nil
 }
 
 // ---- the search -------------------------------------------------------------------------
 
+// gameBuild: a build that has a game (or BIOS file), and where.
 type gameBuild struct {
 	ID        string `json:"id"`
 	CatalogID string `json:"catalog_id,omitempty"`
 	Link      string `json:"link,omitempty"`
 	Title     string `json:"title"`  // the build
-	Folder    string `json:"folder"` // the game's system folder in it
+	Folder    string `json:"folder"` // the game's system folder in it (a BIOS file's folder)
 	Name      string `json:"name"`
+	Path      string `json:"path,omitempty"` // a BIOS file's
 	Size      int64  `json:"size"`
+	Count     int64  `json:"count,omitempty"` // the game's files
+	Full      bool   `json:"full,omitempty"`  // its full index is cached: downloads start right away
 }
 
 type gameHit struct {
@@ -296,6 +332,42 @@ func rankGames(out []*gameHit) {
 		}
 		return a.System < b.System
 	})
+}
+
+// searchBuild: a build a search looks in (one with a game list or a BIOS list).
+type searchBuild struct {
+	folder, id, catalogID, link, title string
+	full                               bool
+}
+
+func (b searchBuild) at(folder, name string, size int64) gameBuild {
+	return gameBuild{ID: b.id, CatalogID: b.catalogID, Link: b.link, Title: b.title, Folder: folder, Name: name, Size: size, Full: b.full}
+}
+
+// searchBuilds: the builds with a game or BIOS list, once each however many links a share
+// is known by (the catalog's first).
+func (s *Server) searchBuilds() []searchBuild {
+	seen := map[string]bool{}
+	var out []searchBuild
+	for _, c := range s.knownShares() {
+		l, err := share.ParseLink(c.link)
+		if err != nil || seen[l.FolderID] || s.gamesFile(l.FolderID) == "" {
+			continue
+		}
+		seen[l.FolderID] = true
+		if _, err := os.Stat(s.gamesFile(l.FolderID)); err != nil {
+			if _, err := os.Stat(s.biosFile(l.FolderID)); err != nil {
+				continue
+			}
+		}
+		b := searchBuild{folder: l.FolderID, id: app.LinkID(c.link), catalogID: c.catalogID, title: c.title,
+			full: strings.HasSuffix(s.cachedIndex(l.FolderID), ".usnindex")}
+		if c.catalogID == "" {
+			b.link = c.link
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 // knownShares: every share usnfetch knows the link of (catalog, or opened by its link).
@@ -350,6 +422,22 @@ func (s *Server) gameRoutes() {
 		return map[string]any{"items": items, "paths": paths, "folders": folders, "files": files, "size": size}, nil
 	})
 
+	// one file of an open build by its path (a BIOS file from a search), to stream it
+	s.api("GET /api/shares/{sid}/fileid", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		_, ix, err := s.ready(r.PathValue("sid"))
+		if err != nil {
+			return nil, err
+		}
+		fe, err := ix.FileByPath(r.URL.Query().Get("path"))
+		if err != nil {
+			return nil, err
+		}
+		if fe == nil {
+			return nil, fail(404, "this build doesn't have that file any more", "no_file")
+		}
+		return map[string]any{"fid": fe.FID, "size": fe.Size, "name": path.Base(strings.ReplaceAll(fe.Path, "\\", "/"))}, nil
+	})
+
 	s.api("GET /api/search/games", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		q := share.TitleKey(r.URL.Query().Get("q"))
 		toks := strings.Fields(q)
@@ -360,23 +448,12 @@ func (s *Server) gameRoutes() {
 		t0 := time.Now()
 		groups := map[string]*gameHit{}
 		builds := 0
-		seen := map[string]bool{} // a share opened from the catalog and by its link: once
-		for _, c := range s.knownShares() {
-			l, err := share.ParseLink(c.link)
-			if err != nil || seen[l.FolderID] {
-				continue
-			}
-			seen[l.FolderID] = true
-			p := s.gamesFile(l.FolderID)
-			if p == "" {
-				continue
-			}
-			set := s.games.load(l.FolderID, p)
+		for _, sb := range s.searchBuilds() {
+			set := s.games.load(sb.folder, s.gamesFile(sb.folder), readGames)
 			if set == nil {
 				continue
 			}
 			builds++
-			id := app.LinkID(c.link)
 			for i, g := range set.games {
 				pp := set.prep[i]
 				score, ok := titleScore(toks, pp)
@@ -389,13 +466,11 @@ func (s *Server) gameRoutes() {
 					h = &gameHit{Title: g.Title, System: g.System, score: score, key: key, words: len(pp.words)}
 					groups[g.System+"\x00"+key] = h
 				}
-				b := gameBuild{ID: id, CatalogID: c.catalogID, Title: c.title, Folder: g.Folder, Name: g.Name, Size: g.Size}
-				if c.catalogID == "" {
-					b.Link = c.link
-				}
+				b := sb.at(g.Folder, g.Name, g.Size)
+				b.Count = max(1, g.Count)
 				dup := false
 				for _, x := range h.Builds {
-					dup = dup || x.ID == id
+					dup = dup || x.ID == b.ID
 				}
 				if !dup {
 					h.Builds = append(h.Builds, b)

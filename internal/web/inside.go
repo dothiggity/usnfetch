@@ -19,7 +19,7 @@ import (
 // both from the share indexes kept in the cache (share/cache.go).
 
 // insideVersion: bump to work the summaries out again (after changing share.Inside).
-const insideVersion = 4 // 2: games grouped by title, each build's game list kept; 3: one name per console; 4: scene-style names, more console names
+const insideVersion = 5 // 2: games grouped by title, each build's game list kept; 3: one name per console; 4: scene-style names, more console names; 5: BIOS files, game file counts
 
 // cachedIndex: the cache file this share's index is kept in (the full index if there is
 // one, else its file list, plain or zipped), "" if none.

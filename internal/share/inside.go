@@ -154,6 +154,7 @@ type Game struct {
 	Folder string `json:"f"` // its system folder in the share
 	Name   string `json:"n"` // its first file (or folder)
 	Size   int64  `json:"z"` // all its files
+	Count  int64  `json:"c"` // its files (a folder's count)
 }
 
 var tagRE = regexp.MustCompile(`\s*[\(\[][^\)\]]*[\)\]]`)
@@ -217,8 +218,8 @@ var unaccent = map[rune]rune{'á': 'a', 'à': 'a', 'â': 'a', 'ä': 'a', 'ã': '
 
 // entry: a file or folder in a system folder, with its size.
 type entry struct {
-	name string
-	size int64
+	name        string
+	size, count int64
 }
 
 // gamesIn: the games of one system folder: its files grouped by title (not artwork, game
@@ -226,24 +227,25 @@ type entry struct {
 func gamesIn(system, folder string, files, dirs []entry) []Game {
 	idx := map[string]int{}
 	var out []Game
-	add := func(name string, size int64, dir bool) {
-		k := gameKey(name, dir)
+	add := func(e entry, dir bool) {
+		k := gameKey(e.name, dir)
 		if k == "" {
 			return
 		}
 		if i, ok := idx[k]; ok {
-			out[i].Size += size
+			out[i].Size += e.size
+			out[i].Count += e.count
 			return
 		}
 		idx[k] = len(out)
-		out = append(out, Game{Title: GameTitle(name), System: system, Folder: folder, Name: name, Size: size})
+		out = append(out, Game{Title: GameTitle(e.name), System: system, Folder: folder, Name: e.name, Size: e.size, Count: e.count})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
 	for _, f := range files {
-		add(f.name, f.size, false)
+		add(f, false)
 	}
 	for _, d := range dirs {
-		add(d.name, d.size, true)
+		add(d, true)
 	}
 	return out
 }
@@ -259,6 +261,7 @@ func gameKey(name string, dir bool) string {
 
 // GameFile is one file, or game folder, of a game.
 type GameFile struct {
+	FID    int64  `json:"fid,omitempty"` // a file's, to stream it (Index.File)
 	Path   string `json:"path"`
 	Name   string `json:"name"`
 	Size   int64  `json:"size"`
@@ -276,14 +279,14 @@ func (ix *Index) GameFiles(folder, name string) ([]GameFile, error) {
 		return nil, err
 	}
 	var out []GameFile
-	rows, err := ix.rw.Query("SELECT df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
+	rows, err := ix.rw.Query("SELECT f.fid, df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var g GameFile
 		var size sql.NullInt64
-		if err := rows.Scan(&g.Name, &g.Path, &size); err != nil {
+		if err := rows.Scan(&g.FID, &g.Name, &g.Path, &size); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -384,9 +387,9 @@ func (ix *Index) Games() ([]System, []Game, error) {
 		var out []entry
 		for r.Next() {
 			var n sql.NullString
-			var z sql.NullInt64
-			_ = r.Scan(&n, &z)
-			out = append(out, entry{n.String, z.Int64})
+			var z, c sql.NullInt64
+			_ = r.Scan(&n, &z, &c)
+			out = append(out, entry{n.String, z.Int64, c.Int64})
 		}
 		return out, r.Err()
 	}
@@ -396,11 +399,11 @@ func (ix *Index) Games() ([]System, []Game, error) {
 		if mediaDir[strings.ToLower(d.name)] || strings.EqualFold(d.name, "bios") {
 			continue
 		}
-		files, err := entries("SELECT df.name, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ?", d.did)
+		files, err := entries("SELECT df.name, f.size, 1 FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ?", d.did)
 		if err != nil {
 			return nil, nil, err
 		}
-		dirs, err := entries("SELECT name, size FROM dirs WHERE parent = ?", d.did)
+		dirs, err := entries("SELECT name, size, count FROM dirs WHERE parent = ?", d.did)
 		if err != nil {
 			return nil, nil, err
 		}
