@@ -774,11 +774,31 @@ async function pageSearch() {
   };
   const short = (t, n = 38) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
 
+  // download one game from one build: open the build (cached: a moment), find all of the
+  // game's files there (discs, tracks, regions), then the usual review
+  async function download(g, b, btn) {
+    btn.disabled = true;
+    try {
+      const s = await prepareShare(b.link ? { link: b.link } : { catalog_id: b.catalog_id || b.id }, b.title);
+      if (!s) return;
+      const r = await api(`/shares/${s.id}/game?folder=${encodeURIComponent(b.folder)}&name=${encodeURIComponent(b.name)}`);
+      const label = `${g.title} (${g.system})`;
+      await reviewDownload(s, { paths: r.paths, folders: r.folders }, null, { label, title: "Download " + label,
+        picked: r.items.map((it) => [it.path, { folder: it.folder, count: it.count, size: it.size }]) });
+    } catch (e) { fail(e); }
+    finally { btn.disabled = false; }
+  }
+
   const gameRow = (g) => h("div", { class: "gm-row" },
     h("div", { class: "gm-t" }, h("b", {}, g.title), h("span", { class: "chip plain" }, g.system)),
     h("div", { class: "gm-b" }, h("span", { class: "faint small" }, `in ${g.builds.length} build${g.builds.length === 1 ? "" : "s"}:`),
-      g.builds.map((b) => h("a", { class: "chip plain sys", href: "#", title: `${b.title}\n${b.folder}/${b.name}`, onclick: (ev) => { ev.preventDefault(); go(b, b.folder); } },
-        short(b.title), b.size ? h("span", { class: "faint" }, " " + fmtBytes(b.size)) : null))));
+      g.builds.map((b) => {
+        const dl = h("button", { class: "dl", type: "button", title: `Download ${g.title} from ${b.title}`, "aria-label": `Download from ${b.title}`,
+          onclick: (ev) => { ev.preventDefault(); download(g, b, dl); } }, icon("download"));
+        return h("span", { class: "gm-bld" },
+          h("a", { class: "chip plain sys", href: "#", title: `Open ${b.title} here\n${b.folder}/${b.name}`, onclick: (ev) => { ev.preventDefault(); go(b, b.folder); } },
+            short(b.title), b.size ? h("span", { class: "faint" }, " " + fmtBytes(b.size)) : null), dl);
+      })));
 
   const card = (sh) => h("div", { class: "panel sr" },
     h("div", { class: "head" }, icon("folder"), h("h2", {}, h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); go(sh, ""); } }, sh.title)), h("span", { class: "grow" }),
@@ -892,8 +912,11 @@ function renderBasket() {
 const safeSeg = (x) => String(x || "").replace(/[<>:"|?*\x00-\x1f]/g, "_").replace(/[ .]+$/, "") || "_";
 
 // reviewDownload shows what a download will do -- size against free space, where the files
-// land, what happens to archives -- and queues it. sel: null = the whole share.
-async function reviewDownload(s, sel, done) {
+// land, what happens to archives -- and queues it. sel: null = the whole share. more (a
+// download from elsewhere than the share page, like a game from Search): title, label (what
+// the job shows as picked) and picked ([path, {folder, count, size}], instead of what
+// is ticked in the share page).
+async function reviewDownload(s, sel, done, more = {}) {
   const plan = await api(`/shares/${s.id}/plan`, { body: sel || {} });
   let mode = plan.extract_default;
   const cat = h("select", { class: "input" }, plan.categories.map((c) => h("option", { value: c, selected: c === plan.category }, c)));
@@ -950,12 +973,13 @@ async function reviewDownload(s, sel, done) {
     h("input", { type: "radio", name: "xmode", value: v, checked: v === mode, onchange: () => { mode = v; } }),
     h("div", {}, h("div", { class: "cl" }, label, v === plan.extract_default ? h("span", { class: "chip plain" }, "default") : null), h("div", { class: "ch" }, help)))));
   // what is ticked, item by item (a selection kept while browsing is easy to lose track of)
-  const picked = sel ? basket.list(s.id) : [];
+  const picked = more.picked || (sel ? basket.list(s.id) : []);
   const pickedList = picked.length ? h("details", { class: "picklist" }, h("summary", {}, `Show the ${picked.length.toLocaleString()} selected item${picked.length === 1 ? "" : "s"}`),
     h("div", { class: "pl" }, picked.slice(0, 500).map(([p, m]) => h("div", { class: "pr" }, icon(m.folder ? "folder" : "file"), h("span", { class: "pp", title: p }, p || "All files"),
       h("span", { class: "faint" }, m.folder ? `${(m.count || 0).toLocaleString()} files · ${fmtBytes(m.size)}` : fmtBytes(m.size)))),
     picked.length > 500 ? h("div", { class: "faint small" }, `and ${picked.length - 500} more`) : null)) : null;
-  modal({ title: "Download from " + shareTitle(s), body: [
+  modal({ title: more.title || "Download from " + shareTitle(s), body: [
+    more.title ? h("div", { class: "muted" }, "From ", h("b", {}, shareTitle(s))) : null,
     h("div", { class: "facts" },
       h("div", {}, h("div", { class: "k" }, "Files"), h("div", { class: "v" }, plan.files.toLocaleString())),
       h("div", {}, h("div", { class: "k" }, "Size"), h("div", { class: "v" }, fmtBytes(plan.size))),
@@ -970,7 +994,7 @@ async function reviewDownload(s, sel, done) {
     nothingNote,
     plan.active_jobs && plan.active_jobs.length ? h("div", { class: "note" }, `Another download from this share is ${plan.active_jobs[0].state}: this one starts when it finishes.`) : null,
   ], actions: [{ label: "Cancel" }, { label: over ? "Queue anyway" : "Queue download", kind: "primary", ref: (b) => { queueBtn = b; }, run: async () => {
-    const r = await api(`/shares/${s.id}/download`, { body: { ...(sel || {}), category: cat.value, name: name.value.trim(), extract: mode, existing } });
+    const r = await api(`/shares/${s.id}/download`, { body: { ...(sel || {}), category: cat.value, name: name.value.trim(), extract: mode, existing, label: more.label } });
     toast(`Queued ${r.files.toLocaleString()} file${r.files === 1 ? "" : "s"} · ${fmtBytes(r.size)}`, "ok", { label: "View in Activity", href: "#/activity" });
     if (done) done(r);
   } }] });

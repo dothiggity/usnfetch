@@ -186,6 +186,14 @@ table.t td.act { width: 1%; white-space: nowrap; text-align: right; }
 .gm-t { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .gm-t b { font-size: 14.5px; }
 .gm-b { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* a build that has the game: open it there, or download the game from it */
+.gm-bld { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.gm-bld:hover, .gm-bld:focus-within { border-color: var(--accent); }
+.gm-bld .chip { border: 0; border-radius: 0; }
+.gm-bld .dl { display: inline-flex; align-items: center; padding: 0 8px 0 6px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+.gm-bld .dl:hover, .gm-bld .dl:focus-visible { color: var(--accent); background: var(--panel-2); outline: none; }
+.gm-bld .dl:disabled { opacity: .5; cursor: progress; }
+.gm-bld .dl svg.i { width: 14px; height: 14px; vertical-align: 0; }
 .sr-h { margin: 8px 0 0; font-size: 15px; }
 .name-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .name-cell .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

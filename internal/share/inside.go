@@ -226,9 +226,8 @@ type entry struct {
 func gamesIn(system, folder string, files, dirs []entry) []Game {
 	idx := map[string]int{}
 	var out []Game
-	add := func(name string, size int64) {
-		t := GameTitle(name)
-		k := TitleKey(t)
+	add := func(name string, size int64, dir bool) {
+		k := gameKey(name, dir)
 		if k == "" {
 			return
 		}
@@ -237,20 +236,81 @@ func gamesIn(system, folder string, files, dirs []entry) []Game {
 			return
 		}
 		idx[k] = len(out)
-		out = append(out, Game{Title: t, System: system, Folder: folder, Name: name, Size: size})
+		out = append(out, Game{Title: GameTitle(name), System: system, Folder: folder, Name: name, Size: size})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
 	for _, f := range files {
-		if ext := strings.ToLower(path.Ext(f.name)); !notGame[ext] && !strings.EqualFold(f.name, "gamelist.xml") {
-			add(f.name, f.size)
-		}
+		add(f.name, f.size, false)
 	}
 	for _, d := range dirs {
-		if !mediaDir[strings.ToLower(d.name)] {
-			add(d.name, d.size)
-		}
+		add(d.name, d.size, true)
 	}
 	return out
+}
+
+// gameKey: which game a file (or folder) of a system folder is part of, as its TitleKey; ""
+// when it is none (artwork, a game list, notes).
+func gameKey(name string, dir bool) string {
+	if dir && mediaDir[strings.ToLower(name)] || !dir && (notGame[strings.ToLower(path.Ext(name))] || strings.EqualFold(name, "gamelist.xml")) {
+		return ""
+	}
+	return TitleKey(GameTitle(name))
+}
+
+// GameFile is one file, or game folder, of a game.
+type GameFile struct {
+	Path   string `json:"path"`
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	Count  int64  `json:"count,omitempty"` // a folder's files
+	Folder bool   `json:"folder,omitempty"`
+}
+
+// GameFiles: everything of one game in a system folder, as Games counts it: its discs, disc
+// tracks, regions and revisions (or its folder). name is any of its files, as Game.Name. None
+// when the folder isn't there or has nothing of that game.
+func (ix *Index) GameFiles(folder, name string) ([]GameFile, error) {
+	key := TitleKey(GameTitle(name))
+	d, err := ix.Dir(folder)
+	if err != nil || d == nil || key == "" {
+		return nil, err
+	}
+	var out []GameFile
+	rows, err := ix.rw.Query("SELECT df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var g GameFile
+		var size sql.NullInt64
+		if err := rows.Scan(&g.Name, &g.Path, &size); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if g.Size = size.Int64; gameKey(g.Name, false) == key {
+			out = append(out, g)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = ix.rw.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? ORDER BY name", d.DID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		g := GameFile{Folder: true}
+		var size, count sql.NullInt64
+		if err := rows.Scan(&g.Name, &g.Path, &size, &count); err != nil {
+			return nil, err
+		}
+		if g.Size, g.Count = size.Int64, count.Int64; gameKey(g.Name, true) == key {
+			out = append(out, g)
+		}
+	}
+	return out, rows.Err()
 }
 
 // Inside: the build's systems, most games first; nil when it has no games folder. Builds

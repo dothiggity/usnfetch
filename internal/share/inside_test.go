@@ -52,6 +52,27 @@ func TestInside(t *testing.T) {
 			t.Errorf("system %d: %+v, want %+v", i, got[i], want[i])
 		}
 	}
+	// a game's files, to download it from a search: its disc tracks, not its artwork; a game folder
+	files, err := ix.GameFiles("RetroBat/roms/psx", "Crash.cue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range files {
+		names = append(names, f.Path)
+	}
+	if len(names) != 3 || names[0] != "RetroBat/roms/psx/Crash (Track 1).bin" || names[2] != "RetroBat/roms/psx/Crash.cue" {
+		t.Errorf("GameFiles Crash: %q", names)
+	}
+	if files, _ := ix.GameFiles("RetroBat/roms/snes", "Mario.sfc"); len(files) != 1 || files[0].Path != "RetroBat/roms/snes/Mario.sfc" {
+		t.Errorf("GameFiles Mario (not its box art): %+v", files)
+	}
+	if files, _ := ix.GameFiles("RetroBat/roms/ps3", "Some Game.ps3"); len(files) != 1 || !files[0].Folder || files[0].Count != 1 {
+		t.Errorf("GameFiles PS3 folder: %+v", files)
+	}
+	if files, _ := ix.GameFiles("RetroBat/roms/snes", "Metroid.sfc"); len(files) != 0 {
+		t.Errorf("GameFiles of a game that isn't there: %+v", files)
+	}
 	if !looksLikeSystem("Nintendo 64") || !looksLikeSystem("Sony Playstation 2") || looksLikeSystem("0100aa") || looksLikeSystem("Taisen Hot Gimmick 5") {
 		t.Error("looksLikeSystem")
 	}

@@ -321,6 +321,35 @@ func (s *Server) knownShares() []cachedShare {
 }
 
 func (s *Server) gameRoutes() {
+	// one game of an open build, to download it from a search: its files and folders as a
+	// selection for /plan and /download (?folder= its system folder, ?name= one of its files)
+	s.api("GET /api/shares/{sid}/game", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		_, ix, err := s.ready(r.PathValue("sid"))
+		if err != nil {
+			return nil, err
+		}
+		items, err := ix.GameFiles(r.URL.Query().Get("folder"), r.URL.Query().Get("name"))
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			return nil, fail(404, "this build doesn't have that game any more", "no_game")
+		}
+		paths, folders := []string{}, []string{}
+		var files, size int64
+		for _, it := range items {
+			if it.Folder {
+				folders = append(folders, it.Path)
+				files += it.Count
+			} else {
+				paths = append(paths, it.Path)
+				files++
+			}
+			size += it.Size
+		}
+		return map[string]any{"items": items, "paths": paths, "folders": folders, "files": files, "size": size}, nil
+	})
+
 	s.api("GET /api/search/games", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		q := share.TitleKey(r.URL.Query().Get("q"))
 		toks := strings.Fields(q)

@@ -75,12 +75,13 @@ system is a chip that opens its folder.
 
 **Search** looks inside every share you've opened at once, game first. Type "mario 3" and you get
 one line per game and system: *Super Mario Bros. 3 · NES*, *Mario Party 3 · Nintendo 64*, *Super
-Mario 3D World · Switch*. Each line lists the builds that have it, and a click opens that build at
-the game's folder. Regions, discs and the many names one console goes by ("NES", "Nintendo
-Entertainment System") are folded together. Abbreviations and Roman numerals work too: "smb3",
-"sm64", "ff7", "zelda 2". Across about 180,000 games it answers in a few milliseconds. For
-anything that isn't a game, like "scph1001", it searches every file and folder instead, which
-takes under a second.
+Mario 3D World · Switch*. Each line lists the builds that have it. Click a build to open it at the
+game's folder, or the arrow next to it to download the game right there: all of its discs or
+tracks, through the same review as any other download. Regions, discs and the many names one
+console goes by ("NES", "Nintendo Entertainment System") are folded together, and the closest
+titles come first. Abbreviations and Roman numerals work too: "smb3", "sm64", "ff7", "zelda 2".
+Across about 180,000 games it answers in a few milliseconds. For anything that isn't a game,
+like "scph1001", it searches every file and folder instead, which takes under a second.
 
 The Opened column keeps track of what you've already looked at. "Cached" means the share's full
 index is on disk, so it opens in seconds and previews start right away. A share that only has its

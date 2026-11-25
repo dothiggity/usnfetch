@@ -1396,8 +1396,12 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) (any, err
 	if cat == "" {
 		cat = "Default"
 	}
+	picked := pickedLabel(sel)
+	if l := strings.TrimSpace(str(b["label"])); l != "" && sel.sel != nil { // what was picked, in words ("Final Fantasy VII (PlayStation)")
+		picked = string([]rune(l)[:min(120, len([]rune(l)))])
+	}
 	j, err := s.M.AddJob(ss.Link, app.AddOptions{Name: s.jobNameFor(ss, strings.TrimSpace(str(b["name"]))), Category: cat,
-		FileSel: sel.sel, ExtractMode: mode, Existing: str(b["existing"]), Picked: pickedLabel(sel), Size: sel.size})
+		FileSel: sel.sel, ExtractMode: mode, Existing: str(b["existing"]), Picked: picked, Size: sel.size})
 	if err != nil {
 		return nil, err
 	}
