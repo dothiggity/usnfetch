@@ -12,6 +12,8 @@ as they arrive, and checks every file against the share's SHA-256.
 It's an independent project, not affiliated with any other app, and it doesn't come with any
 shares. You bring your own links, and what you download is up to you.
 
+![The catalog: each build with its launcher and device, what's inside it, its size, and whether it's still on your provider](docs/screenshot.png)
+
 ## What it does
 
 - **Browse a share** before downloading: its folders and files, a box-art gallery for game builds
