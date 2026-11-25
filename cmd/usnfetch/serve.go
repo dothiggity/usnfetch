@@ -25,7 +25,7 @@ import (
 
 // Version of the program, without the "v". Release builds set it from the git tag
 // (GoReleaser: -ldflags "-X main.Version=0.10.0"); keep this in step for local builds.
-var Version = "0.12.1"
+var Version = "0.13.0"
 
 type serveOpts struct {
 	host      string

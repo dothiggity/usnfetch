@@ -678,11 +678,12 @@ func (s *Server) routes() {
 	// never replaces a filled one, and differing details are replaced only when asked
 	s.api("POST /api/catalog/import", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		b := body(r)
-		name := str(b["name"])
+		name, src := str(b["name"]), ""
 		if name == "" {
-			name = "import"
+			name = "import" // for the log; links pasted without a name get no source
+		} else {
+			src = strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
 		}
-		src := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
 		entries := catalog.ParseText(catalog.DecodeListFile([]byte(str(b["text"]))), "")
 		if len(entries) == 0 {
 			return nil, fail(400, "no usn:// links found in that text", "no_links")
@@ -1536,12 +1537,31 @@ func (s *Server) settingsView() map[string]any {
 	m["sab_ini"] = app.SabIniDefault()
 	sz, ur := extract.FindTools(st.SevenZipPath, st.UnrarPath)
 	m["tools"] = map[string]any{"sevenzip": sz, "unrar": ur} // what extraction would use ("" = not found)
+	def := app.DefaultSettings()                             // advanced mode shows a setting changed from these
+	m["defaults"] = map[string]any{"verify": def.Verify, "missing_retries": def.MissingRetries, "max_parallel_jobs": def.MaxParallelJobs,
+		"stream_connections": def.StreamConnections, "index_cache_gb": def.IndexCacheGB, "index_dir": "", "sevenzip_path": "", "unrar_path": ""}
 	return m
 }
 
 func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error) {
 	b := body(r)
 	st := s.M.Settings
+	// a new download or index folder has to be one that can be made and written to (setup.go)
+	for _, k := range []string{"complete_dir", "index_dir"} {
+		cur := st.CompleteDir
+		if k == "index_dir" {
+			cur = st.IndexDir
+		}
+		if v, ok := b[k]; ok {
+			if p := strings.TrimSpace(str(v)); p != cur && p != "" {
+				if c := folderCheck(p); c["ok"] != true {
+					return nil, fail(400, str(c["error"]), "bad_folder")
+				}
+			} else if p == "" && k == "complete_dir" {
+				return nil, fail(400, "choose a download folder", "bad_folder")
+			}
+		}
+	}
 	// the 7-Zip and UnRAR paths pick a program to run: only on this machine, only those (guard.go)
 	for k, cur := range map[string]string{"sevenzip_path": st.SevenZipPath, "unrar_path": st.UnrarPath} {
 		v, ok := b[k]

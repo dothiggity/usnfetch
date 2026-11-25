@@ -31,6 +31,7 @@ const ICONS = {
   settings: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z",
   system: "M4 17l6-6-6-6M12 19h8", folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
   file: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z M14 3v5h5", eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+  filter: "M4 5h16l-6.5 8v5.5l-3 1.5V13Z",
   download: "M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14", plus: "M12 5v14M5 12h14", search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z M20 20l-4-4",
   upload: "M12 20V9m0 0-4.5 4.5M12 9l4.5 4.5M5 4h14", trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13", stop: "M7 7h10v10H7Z",
   play: "M7 5l12 7-12 7Z", refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 11V5m0 6h-6", shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6Z",
@@ -133,6 +134,7 @@ function modal({ title, body, actions = [], wide = false, onclose }) {
 
 // menu: a small list of labelled actions under a button ([label, run, kind] items)
 function menu(anchor, items) {
+  if (typeof openPop !== "undefined" && openPop) openPop.close();
   document.querySelectorAll(".popmenu").forEach((m) => m.remove());
   const r = anchor.getBoundingClientRect();
   const m = h("div", { class: "popmenu", style: { top: `${r.bottom + 4}px`, right: `${Math.max(8, window.innerWidth - r.right)}px` } },
@@ -140,6 +142,24 @@ function menu(anchor, items) {
   document.body.append(m);
   const away = (ev) => { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener("mousedown", away, true); } };
   setTimeout(() => document.addEventListener("mousedown", away, true), 0);
+}
+
+// popover: a small panel under a button (filters and the like); a click outside, Escape or
+// the button again closes it
+let openPop = null;
+function popover(anchor, content) {
+  if (openPop) { const again = openPop.anchor === anchor; openPop.close(); if (again) return null; }
+  document.querySelectorAll(".popmenu").forEach((m) => m.remove());
+  const r = anchor.getBoundingClientRect();
+  const m = h("div", { class: "popmenu pop", role: "dialog", style: { top: `${r.bottom + 4}px`, right: `${Math.max(8, window.innerWidth - r.right)}px` } }, content);
+  document.body.append(m);
+  const close = () => { m.remove(); document.removeEventListener("mousedown", away, true); document.removeEventListener("keydown", esc); if (openPop && openPop.m === m) openPop = null; };
+  openPop = { anchor, close, m };
+  const away = (ev) => { if (!m.contains(ev.target) && !anchor.contains(ev.target)) close(); };
+  const esc = (ev) => { if (ev.key === "Escape") { close(); anchor.focus(); } };
+  setTimeout(() => { document.addEventListener("mousedown", away, true); document.addEventListener("keydown", esc); }, 0);
+  const f = m.querySelector("select,input,button"); if (f) f.focus();
+  return close;
 }
 
 // emptyState: the one look for "nothing here yet"
@@ -168,11 +188,14 @@ const THEMES = [["dark", "Dark", "dark"], ["light", "Light", "light"],
   ["gamegear", "Game Gear", "dark"], ["megadrive", "Mega Drive", "dark"], ["dreamcast", "Dreamcast", "light"]];
 const toneOf = (t) => (THEMES.find((x) => x[0] === t) || [0, 0, "dark"])[2];
 // layout: "side" (the full menu) or "rail" (collapsed to icons); the old menu across the top is gone
-const UI = { layout: store.get("ui.layout", "side") === "rail" ? "rail" : "side", density: store.get("ui.density", "comfortable"), theme: store.get("ui.theme", "dark") };
+// advanced: Settings → Show advanced. Expert settings and details carry the class "adv" and
+// stay hidden until it's on (app.css), unless they've been changed from their default.
+const UI = { layout: store.get("ui.layout", "side") === "rail" ? "rail" : "side", density: store.get("ui.density", "comfortable"), theme: store.get("ui.theme", "dark"),
+  advanced: store.get("ui.advanced", false) === true };
 const lightQuery = window.matchMedia ? matchMedia("(prefers-color-scheme: light)") : null;
 function applyUI() {
   const r = document.documentElement.dataset;
-  r.layout = UI.layout; r.density = UI.density;
+  r.layout = UI.layout; r.density = UI.density; r.advanced = UI.advanced ? "on" : "off";
   r.theme = UI.theme === "system" ? (lightQuery && lightQuery.matches ? "light" : "dark") : (THEMES.some((x) => x[0] === UI.theme) ? UI.theme : "dark");
   r.tone = toneOf(r.theme);
   const c = $(".side .collapse");
@@ -193,17 +216,20 @@ const STATE_CHIP = { queued: "", paused: "warn", planning: "info", downloading: 
   completed: "ok", failed: "bad", stopped: "warn" };
 const jobLabel = (j) => (j.picked ? `${j.name} — ${j.picked}` : j.name);
 const stateChip = (s) => h("span", { class: "chip " + (STATE_CHIP[s] ?? "") }, s);
-const VERDICT = { available: ["ok", "Available"], partial: ["warn", "Partial"], missing: ["bad", "Missing"], error: ["", "Check failed"], empty: ["", "Empty"],
-  link_ok: ["plain", "Link OK"], gone: ["bad", "Gone"] };
-// link_ok / gone come from the link check (is the share's manifest still at your provider?);
-// the others from a sample of the share's own articles, checked when it is opened
+// Health is one scale, worst to best: Gone (its manifest isn't at your provider any more), Missing
+// and Partly missing (a sample of its articles, some or all not there), Found (the manifest is
+// there: the light link check), Verified (a sample of its articles all there, checked when it's
+// opened). link_ok / gone come from the link check, the others from the sample.
+const VERDICT = { available: ["ok", "Verified"], partial: ["warn", "Partly missing"], missing: ["bad", "Missing"], error: ["", "Check failed"], empty: ["", "Empty"],
+  link_ok: ["info", "Found"], gone: ["bad", "Gone"] };
 function healthChip(hl) {
   if (!hl || !hl.verdict) return h("span", { class: "faint", title: "Not checked yet. Opening the share checks it; so does Check links." }, "—");
   const [k, label] = VERDICT[hl.verdict] || ["", hl.verdict];
   const when = hl.checked_at ? ago(hl.checked_at) : "";
-  const title = hl.verdict === "link_ok" ? `The share's manifest is at your provider (${when}). Open the share to check a sample of its files.`
-    : hl.verdict === "gone" ? `The share's manifest isn't at any of your providers any more (${when}), so the share can't be opened.`
-    : hl.sampled ? `${hl.available}/${hl.sampled} sampled articles found · ${when}` : "";
+  const title = hl.verdict === "link_ok" ? `Found: the share's manifest is at your provider (${when}). Opening the share checks a sample of its files too, to verify it.`
+    : hl.verdict === "gone" ? `Gone: the share's manifest isn't at any of your providers any more (${when}), so the share can't be opened.`
+    : hl.verdict === "available" ? `Verified: all ${hl.sampled || ""} sampled articles are at your provider · ${when}`
+    : hl.sampled ? `${hl.available} of ${hl.sampled} sampled articles found · ${when}` : "";
   return h("span", { class: "chip " + k, title }, h("span", { class: "dot" }), label);
 }
 
@@ -298,7 +324,7 @@ function renderStatusBar(s, look) {
       cur.eta ? [" · ETA ", h("b", {}, fmtEta(cur.eta))] : null)) : null;
   put(bar,
     h("img", { class: "sb-icon", src: `/static/icon-${look}.png`, alt: "" }),
-    h("div", { class: "sb-main" }, main),
+    h("a", { class: "sb-main", href: "#/activity", title: "Open Activity" }, main),
     prog,
     h("div", { class: "sb-stats" },
       th.paused ? null : h("span", { class: "sb-speed", title: th.limit ? `Limited to ${fmtRate(th.limit)}` : "Download speed" },
@@ -463,6 +489,50 @@ async function prepareShare(body, title) {
   });
 }
 
+// lookInside: opens catalog builds one at a time to learn what's in them (games and BIOS files,
+// for Search and the catalog), then closes each again unless it was open already. The first
+// time, each fetches its index from Usenet (about 100 MB per TB of build) and keeps it.
+// onStep(i, n, entry) before each; stop() true stops after the current one. Resolves to how
+// many it looked inside.
+async function lookInside(entries, onStep, stop) {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let open = new Set();
+  try { open = new Set((await api("/shares")).map((s) => s.id)); } catch { /* none open */ }
+  let n = 0;
+  for (let i = 0; i < entries.length && !(stop && stop()); i++) {
+    if (onStep) onStep(i, entries.length, entries[i]);
+    let s;
+    try { s = await api("/shares/open", { body: { catalog_id: entries[i].id } }); } catch { continue; }
+    // until it's open and its availability checked (2 minutes at most for that); Stop stops waiting
+    for (let t = 0; (s.state === "loading" && t < 3600) || (s.state === "ready" && s.checking && t < 120); t++) {
+      if (stop && stop()) break;
+      await wait(1000);
+      try { s = await api("/shares/" + s.id); } catch { break; }
+    }
+    if (s.state === "ready") n++;
+    if (!open.has(s.id)) await api(`/shares/${s.id}/close`, { body: {} }).catch(() => {});
+  }
+  return n;
+}
+// the index a build's first opening fetches: about 100 MB per TB
+const indexGuess = (entries) => entries.reduce((a, e) => a + ((e.share && e.share.size) || e.listed_size || 0), 0) / 1e4;
+const lookInsideText = (list) => { const idx = indexGuess(list);
+  return `usnfetch opens ${list.length === 1 ? "the build" : `the ${list.length} builds`} one at a time to see what's in ${list.length === 1 ? "it" : "them"}. ` +
+    `The first time, each fetches its index from Usenet${idx ? ` (about ${fmtBytes(idx)} in all)` : ""} and keeps it, so it opens in seconds from then on. Nothing goes to your download folder.`; };
+// lookInsideDialog: lookInside with a dialog to follow it and stop it
+async function lookInsideDialog(list, after) {
+  if (needsProvider()) { noProviderDialog(); return; }
+  if (!(await confirmBox("Look inside", lookInsideText(list), "Look inside"))) return;
+  let stop = false;
+  const line = h("div", {}, "Starting…");
+  const close = modal({ title: "Looking inside", body: [h("div", { class: "note cover" }, h("span", { class: "spin" }), line),
+    h("div", { class: "faint small" }, "It carries on if you close this.")], actions: [{ label: "Stop", run: () => { stop = true; } }, { label: "Close", kind: "primary" }] });
+  const n = await lookInside(list, (i, all, e) => { line.textContent = `${i + 1} of ${all}: ${e.title}`; }, () => stop);
+  close();
+  toast(`Looked inside ${n} build${n === 1 ? "" : "s"}`, "ok");
+  if (after) after();
+}
+
 // importDialog: paste or pick a list, see what it adds and what it would change, then import
 function importDialog(after) {
   const name = h("input", { class: "input", placeholder: "Source name (optional)" });
@@ -619,17 +689,39 @@ async function pageCatalog() {
   }
   // opened before or not: "opened" (browsed at some point), "cached" (its index is on disk, so it
   // opens in seconds), "new" (never opened)
-  const seenSel = h("select", { class: "input", title: "Shares you have opened before, and those whose index is still cached", onchange: () => {
+  const seenSel = h("select", { class: "input adv", title: "Shares you have opened before, and those whose index is still cached", onchange: () => {
     f.seen = seenSel.value; store.set("cat.seen", f.seen); render();
   } });
-  const sort = h("select", { class: "input", onchange: () => { f.sort = sort.value; store.set("cat.sort", f.sort); render(); } },
+  const sort = h("select", { class: "input adv", onchange: () => { f.sort = sort.value; store.set("cat.sort", f.sort); render(); } },
     [["title", "Title"], ["size-desc", "Size: largest"], ["size-asc", "Size: smallest"], ["added", "Recently added"], ["opened", "Recently opened"], ["health", "Health"], ["status", "Status"],
       ["launcher", "Launcher"], ["device", "Device"]]
       .map(([v, l]) => h("option", { value: v, selected: f.sort === v }, l)));
   const hide = h("input", { type: "checkbox", checked: f.hide, onchange: () => { f.hide = hide.checked; store.set("cat.hide", f.hide); render(); } });
-  const filters = [h("div", { class: "search" }, icon("search"), q), src, lsel, dsel, seenSel, sort, h("label", { class: "check", title: "Hide entries that are queued or downloaded in full" }, hide, "Hide queued / done")];
+  // the search box, and the rest behind Filters: chips under the toolbar say which are on
+  const badge = h("span", { class: "badge hidden" });
+  const filtersBtn = h("button", { class: "btn", "aria-haspopup": "dialog", title: "Launcher, device, what's queued or done…",
+    onclick: () => popover(filtersBtn, h("div", { class: "form filters" },
+      h("label", { class: "k" }, "Launcher"), lsel, h("label", { class: "k" }, "Device"), dsel,
+      data.sources.length > 1 ? [h("label", { class: "k" }, "Source"), src] : null,
+      h("label", { class: "k adv" }, "Opened"), seenSel, h("label", { class: "k adv" }, "Sort by"), sort,
+      h("div", { class: "full" }, h("label", { class: "check", title: "Hide entries that are queued or downloaded in full" }, hide, "Hide queued / done")))) },
+  icon("filter"), "Filters", badge);
+  const searchBox = h("div", { class: "search" }, icon("search"), q);
+  const filters = [searchBox, filtersBtn];
   const importBtn = h("button", { class: "btn primary", onclick: () => importDialog(load) }, icon("upload"), "Import list");
   toolbar(...filters, h("button", { class: "btn", onclick: openLinkDialog }, icon("link"), "Open link"), importBtn);
+  const onChips = h("div", { class: "filter-chips" });
+  // the filters that are on, each with a way to turn it off
+  function showOn() {
+    const optText = (el) => (el.selectedOptions[0] ? el.selectedOptions[0].textContent.replace(/ \(\d+\)$/, "") : "");
+    const on = [f.launcher && ["Launcher: " + optText(lsel), () => setTag("launcher", "")], f.device && ["Device: " + optText(dsel), () => setTag("device", "")],
+      f.source && ["Source: " + f.source, () => { f.source = ""; src.value = ""; store.set("cat.source", ""); render(); }],
+      f.seen && [optText(seenSel), () => { f.seen = ""; seenSel.value = ""; store.set("cat.seen", ""); render(); }],
+      f.hide && ["Hiding queued / done", () => { f.hide = false; hide.checked = false; store.set("cat.hide", false); render(); }]].filter(Boolean);
+    badge.textContent = on.length; badge.classList.toggle("hidden", !on.length);
+    put(onChips, on.map(([label, off]) => h("span", { class: "chip plain fchip" }, label,
+      h("button", { type: "button", class: "x", title: "Turn this filter off", "aria-label": "Turn off: " + label, onclick: off }, icon("x")))));
+  }
 
   const dock = h("div", { class: "selbar dock hidden" });
   const count = h("div", { class: "countline" });
@@ -645,9 +737,9 @@ async function pageCatalog() {
     return th;
   }
   const thead = h("thead", {}, h("tr", {}, h("th", { class: "cb" }, head), cth("Title", "title"), cth("Size", "size", "right"),
-    cth("Opened", "opened"), cth("Health", "health"), cth("Status", "status"), h("th", { class: "act" }, "")));
-  const table = h("div", { class: "tablewrap" }, h("table", { class: "t" }, thead, tbody));
-  view.append(count, table, dock);
+    cth("Opened", "opened", "adv"), cth("Health", "health"), cth("Status", "status"), h("th", { class: "act" }, "")));
+  const table = h("div", { class: "tablewrap" }, h("table", { class: "t cardrows" }, thead, tbody));
+  view.append(onChips, count, table, dock);
   api("/status").then((st) => {
     if (st.needs_setup) data.no_provider = true;
     if (st.needs_setup) view.prepend(h("div", { class: "note warn", style: { marginBottom: "14px" } }, "No Usenet provider yet. ",
@@ -736,7 +828,7 @@ async function pageCatalog() {
     if (j && j.state === "failed") return h("span", { title: j.detail || "" }, stateChip("failed"));   // the last try failed: say so first
     const showBtn = j && SESSION.local ? h("button", { class: "btn xs ghost icon", title: "Show in folder", onclick: () => revealJob(j.id) }, icon("folder")) : null;
     if (g && g.complete) return h("span", { class: "nowrap" }, h("span", { class: "chip ok", title: "Every file of this share has been downloaded" }, icon("check"), "downloaded"), showBtn);
-    if (g && g.files) return h("span", { class: "nowrap" }, h("span", { class: "chip warn", title: "Some of this share has been downloaded" }, g.of ? `partial · ${g.files.toLocaleString()} of ${g.of.toLocaleString()} files` : `partial · ${g.files.toLocaleString()} files`), showBtn);
+    if (g && g.files) return h("span", { class: "nowrap" }, h("span", { class: "chip plain", title: "Part of this share is in your download folder" }, g.of ? `${g.files.toLocaleString()} of ${g.of.toLocaleString()} files on disk` : `${g.files.toLocaleString()} files on disk`), showBtn);
     if (j) return h("span", { title: j.detail || "" }, stateChip(j.state));
     return h("span", { class: "faint" }, "—");
   }
@@ -764,7 +856,7 @@ async function pageCatalog() {
     const gone = data.entries.filter((e) => e.health && e.health.verdict === "gone").length;
     const unchecked = data.entries.filter((e) => !e.health || !e.health.verdict);
     return [gone ? h("span", { class: "bad-text", title: "Their manifest is gone from your providers: they can't be opened" }, `${gone} gone`) : null,
-      unchecked.length && !data.no_provider ? h("a", { href: "#", title: "Ask your provider whether each link's share is still there: one small request per link",
+      unchecked.length && !data.no_provider ? h("a", { href: "#", class: "adv", title: "Ask your provider whether each link's share is still there: one small request per link",
         onclick: (ev) => { ev.preventDefault(); checkLinks(unchecked.map((e) => e.id)); } }, `check ${unchecked.length} unchecked link${unchecked.length === 1 ? "" : "s"}`) : null];
   }
 
@@ -772,6 +864,7 @@ async function pageCatalog() {
     const total = data.entries.length;
     lsel.classList.toggle("on", !!f.launcher); dsel.classList.toggle("on", !!f.device); seenSel.classList.toggle("on", !!f.seen);   // a filter is narrowing the list
     for (const el of filters) el.classList.toggle("hidden", !total);   // nothing to filter yet
+    showOn();
     thead.classList.toggle("hidden", !total);
     const vis = visible();
     tbody.replaceChildren(...vis.map((e) => {
@@ -781,12 +874,12 @@ async function pageCatalog() {
         h("td", { class: "title-cell" }, h("a", { class: "t1", href: "#", title: "Browse this share", onclick: (ev) => { ev.preventDefault(); openShare({ catalog_id: e.id }).catch(fail); } }, e.title),
           h("div", { class: "t2" }, e.variant ? h("span", {}, e.variant) : null,
             launchers(e).map((t) => tagChip("launcher", t)), devices(e).map((t) => tagChip("device", t)),
-            e.source ? h("span", { class: "chip plain" }, e.source) : null,
-            e.sku ? h("span", { class: "faint mono" }, e.sku) : null,
+            e.source && data.sources.length > 1 ? h("span", { class: "chip plain" }, e.source) : null,
+            e.sku ? h("span", { class: "faint mono adv" }, e.sku) : null,
             webLink(e.info) ? h("a", { href: e.info, target: "_blank", rel: "noopener noreferrer", title: e.info }, icon("ext")) : null),
           insideLine(e.inside)),
         h("td", { class: "right nowrap" }, sizeCell(e)),
-        h("td", {}, openedCell(e)),
+        h("td", { class: "adv" }, openedCell(e)),
         h("td", {}, healthChip(e.health)),
         h("td", {}, statusCell(e)),
         h("td", { class: "act" },
@@ -803,8 +896,8 @@ async function pageCatalog() {
     const partial = data.entries.filter((e) => e.got && !e.got.complete).length;
     put(count, total ? [h("span", {}, `${vis.length} of ${total} entries`),
       h("span", {}, `${data.entries.filter(complete).length} downloaded`), partial ? h("span", {}, `${partial} in part`) : null,
-      h("span", {}, `${data.entries.filter((e) => e.health && e.health.verdict === "available").length} checked available`),
-      h("span", {}, `${data.entries.filter(opened).length} opened · ${data.entries.filter((e) => e.cached).length} cached`),
+      h("span", { class: "adv" }, `${data.entries.filter((e) => e.health && e.health.verdict === "available").length} verified`),
+      h("span", { class: "adv" }, `${data.entries.filter(opened).length} opened · ${data.entries.filter((e) => e.cached).length} cached`),
       linkLine()] : null);
     dock.classList.toggle("hidden", !selected.length);
     importBtn.classList.toggle("primary", !selected.length);   // one main action at a time
@@ -819,7 +912,9 @@ async function pageCatalog() {
           if (!(await confirmBox("Remove from catalog", `Remove ${selected.length} entr${selected.length === 1 ? "y" : "ies"} from the catalog? Downloads are not touched.`, "Remove", "danger solid"))) return;
           await api("/catalog/remove", { body: { ids: [...sel] } }).catch(fail); sel.clear(); load();
         } }, icon("trash"), "Remove"),
-        h("button", { class: "btn", title: "Ask your provider whether each selected share is still there (one small request per link)", onclick: () => checkLinks([...sel]) }, icon("pulse"), "Check links"),
+        h("button", { class: "btn adv", title: "Ask your provider whether each selected share is still there (one small request per link)", onclick: () => checkLinks([...sel]) }, icon("pulse"), "Check links"),
+        selected.some((e) => e.inside == null) ? h("button", { class: "btn", title: "Open each one to see what's in it, for Search and this list (fetches its index the first time)",
+          onclick: () => lookInsideDialog(selected.filter((e) => e.inside == null), load) }, icon("eye"), "Look inside") : null,
         h("button", { class: "btn primary", onclick: () => downloadEntries(selected, () => { sel.clear(); load(); }).catch(fail) }, icon("download"), "Download selected…"));
     }
     if (!total) {
@@ -923,9 +1018,8 @@ async function pageSearch() {
       picked: r.items.map((it) => [it.path, { folder: it.folder, count: it.count, size: it.size }]) });
   }
   const small = (b) => (b.count || 1) === 1 && b.size <= BROWSER_MAX;
-  // the game's name: straight to the browser when it is one file and not big, else the queue
-  async function getGame(g) {
-    const b = pickBuild(g.builds);
+  // to the browser's own downloads: one file, not big (else the queue after all)
+  async function getGame(g, b) {
     if (!small(b)) return queueGame(g, b);
     const s = await prepareShare(openBody(b), b.title);
     if (!s) return;
@@ -938,31 +1032,43 @@ async function pageSearch() {
     toast(`Downloading ${it.name} (${fmtBytes(it.size)}) in your browser`, "ok");
   }
 
-  // a build that has it: open the build there, or the arrow: the download queue
-  const buildChip = (b, label, queue) => {
-    const dl = h("button", { class: "dl", type: "button", title: `Download ${label} from ${b.title} through the download queue`, "aria-label": `Queue from ${b.title}`,
-      onclick: (ev) => { ev.preventDefault(); busy(dl, queue); } }, icon("download"));
-    return h("span", { class: "gm-bld" },
-      h("a", { class: "chip plain sys", href: "#", title: `Open ${b.title} here\n${b.folder}/${b.name}`, onclick: (ev) => { ev.preventDefault(); go(b, b.folder); } },
-        short(b.title), b.size ? h("span", { class: "faint" }, " " + fmtBytes(b.size)) : null), dl);
-  };
+  // each result's Download button says where it goes. On the computer running usnfetch, one
+  // file small enough goes to the browser's downloads; from another computer (usnfetch on a
+  // NAS or a mini-PC) it goes to usnfetch's download folder. The other way is a link under it.
+  // Anything bigger goes to the download folder, through the review.
+  const what = (count, size) => (count > 1 ? `${count.toLocaleString()} files · ` : "") + fmtBytes(size);
+  function actions(o) {   // o: { browser: fn | null, queue: fn, what }
+    const toBrowser = !!(o.browser && SESSION.local);
+    // one action at a time: a second click (or the other way) while one runs does nothing
+    const one = (el, fn) => { if (!box.classList.contains("busy")) { box.classList.add("busy"); busy(el, fn).finally(() => box.classList.remove("busy")); } };
+    const main = h("button", { class: "btn sm primary", onclick: () => one(main, toBrowser ? o.browser : o.queue) }, icon("download"), "Download");
+    const other = o.browser ? h("a", { class: "small", href: "#", onclick: (ev) => { ev.preventDefault(); one(other, toBrowser ? o.queue : o.browser); } },
+      toBrowser ? "or to the download folder" : "or save on this device") : null;
+    const box = h("div", { class: "gm-act" }, main, h("div", { class: "faint small nowrap" }, (toBrowser ? "in your browser" : "to the download folder") + " · " + o.what), other);
+    return box;
+  }
+  // which build it comes from (the one whose index is at hand first), and a way to open it there
+  function fromLine(builds, cur, pick, folder) {
+    const open = h("a", { href: "#", title: "Open the build at this folder", onclick: (ev) => { ev.preventDefault(); go(cur(), folder(cur())); } }, "open it there");
+    if (builds.length === 1) return h("div", { class: "gm-b faint small" }, "from ", h("span", { class: "muted" }, builds[0].title), " · ", open);
+    const sel = h("select", { class: "input from", "aria-label": "Which build to download it from", onchange: () => pick(builds[+sel.value]) },
+      builds.map((x, i) => h("option", { value: i, selected: x === cur() }, short(x.title, 44) + (x.size ? " · " + fmtBytes(x.size) : ""))));
+    return h("div", { class: "gm-b faint small" }, `in ${builds.length} builds · from `, sel, " · ", open);
+  }
 
   const gameRow = (g) => {
-    const b = pickBuild(g.builds);
-    const direct = small(b);
-    const name = h("a", { class: "gm-name", href: "#", title: direct ? `Download ${b.name} (${fmtBytes(b.size)}) in your browser, from ${b.title}`
-      : `${(b.count || 1).toLocaleString()} file${(b.count || 1) === 1 ? "" : "s"}, ${fmtBytes(b.size)}: that goes through the download queue (from ${b.title})`,
-    onclick: (ev) => { ev.preventDefault(); busy(name, () => getGame(g)); } }, g.title);
+    let b = pickBuild(g.builds);
+    const act = h("div");
+    const show = () => put(act, actions({ browser: small(b) ? () => getGame(g, b) : null, queue: () => queueGame(g, b), what: what(b.count || 1, b.size) }));
+    show();
     return h("div", { class: "gm-row" },
-      h("div", { class: "gm-t" }, name, h("span", { class: "chip plain" }, g.system),
-        h("span", { class: "faint small" }, direct ? fmtBytes(b.size) : `${(b.count || 1) > 1 ? `${b.count.toLocaleString()} files · ` : ""}${fmtBytes(b.size)} · download queue`)),
-      h("div", { class: "gm-b" }, h("span", { class: "faint small" }, `in ${g.builds.length} build${g.builds.length === 1 ? "" : "s"}:`),
-        g.builds.map((x) => buildChip(x, g.title, () => queueGame(g, x)))));
+      h("div", { class: "gm-main" }, h("div", { class: "gm-t" }, h("span", { class: "gm-name" }, g.title), h("span", { class: "chip plain" }, g.system)),
+        fromLine(g.builds, () => b, (x) => { b = x; show(); }, (x) => x.folder)),
+      act);
   };
 
   // ---- BIOS files
-  async function getBios(x) {
-    const b = pickBuild(x.builds);
+  async function getBios(x, b) {
     const s = await prepareShare(openBody(b), b.title);
     if (!s) return;
     const r = await api(`/shares/${s.id}/fileid?path=${encodeURIComponent(b.path)}`);
@@ -978,15 +1084,48 @@ async function pageSearch() {
     await reviewDownload(s, { paths: [b.path] }, null, { label, title: "Download " + label, picked: [[b.path, { size: b.size }]] });
   }
   const biosRow = (x) => {
-    const b = pickBuild(x.builds);
-    const name = h("a", { class: "gm-name", href: "#", title: `Download ${x.name} (${fmtBytes(x.size)}) in your browser, from ${b.title}`,
-      onclick: (ev) => { ev.preventDefault(); busy(name, () => getBios(x)); } }, x.label || x.name);
+    let b = pickBuild(x.builds);
+    const act = h("div");
+    const show = () => put(act, actions({ browser: () => getBios(x, b), queue: () => queueBios(x, b), what: fmtBytes(x.size) }));
+    show();
     return h("div", { class: "gm-row" },
-      h("div", { class: "gm-t" }, name, x.system ? h("span", { class: "chip plain" }, x.system) : null, x.region ? h("span", { class: "chip plain" }, x.region) : null,
-        h("span", { class: "faint small mono" }, (x.label ? x.name + " · " : "") + fmtBytes(x.size))),
-      h("div", { class: "gm-b" }, h("span", { class: "faint small" }, `in ${x.builds.length} build${x.builds.length === 1 ? "" : "s"}:`),
-        x.builds.map((y) => buildChip(y, x.name, () => queueBios(x, y)))));
+      h("div", { class: "gm-main" },
+        h("div", { class: "gm-t" }, h("span", { class: "gm-name" }, x.label || x.name), x.system ? h("span", { class: "chip plain" }, x.system) : null,
+          x.region ? h("span", { class: "chip plain" }, x.region) : null, x.label ? h("span", { class: "faint small mono" }, x.name) : null),
+        fromLine(x.builds, () => b, (y) => { b = y; show(); }, (y) => y.path.split("/").slice(0, -1).join("/"))),
+      act);
   };
+
+  // ---- builds Search doesn't know yet: it knows the games of the builds you've opened or
+  // downloaded, so it says how many it hasn't seen and offers to look inside them
+  let cat = null, looking = false;
+  const cover = h("div");
+  const loadCat = async () => { try { cat = (await api("/catalog")).entries; } catch { cat = []; } };
+  function coverage() {
+    if (!cat || looking) return;
+    const todo = cat.filter((e) => e.inside == null && !(e.health && e.health.verdict === "gone"));
+    if (!cat.length) return put(cover, h("div", { class: "note" }, "Search looks inside the builds in your catalog, and it's empty: ",
+      h("a", { href: "#/catalog" }, "add your share links"), " first."));
+    if (!todo.length) return put(cover);
+    const none = todo.length === cat.length;
+    put(cover, h("div", { class: "note cover" + (none ? " warn" : "") },
+      h("span", {}, none ? `Search knows what's in the builds you've opened or downloaded, and none of your ${cat.length} has been yet. `
+        : `${todo.length} of your ${cat.length} builds ${todo.length === 1 ? "hasn't" : "haven't"} been opened or downloaded, so Search doesn't know ${todo.length === 1 ? "its" : "their"} games yet. `),
+      h("button", { class: "btn sm" + (none ? " primary" : ""), onclick: () => lookAll(todo) }, icon("eye"), todo.length === 1 ? "Look inside it" : `Look inside ${none ? "them" : "those " + todo.length}`)));
+  }
+  async function lookAll(list) {
+    if (needsProvider()) { noProviderDialog(); return; }
+    if (!(await confirmBox("Look inside", lookInsideText(list), "Look inside"))) return;
+    looking = true;
+    let stop = false;
+    const line = h("span"), stopBtn = h("button", { class: "btn sm ghost", onclick: () => { stop = true; stopBtn.disabled = true; stopBtn.textContent = "Stopping after this one…"; } }, "Stop");
+    put(cover, h("div", { class: "note cover" }, h("span", { class: "spin" }), line, stopBtn));
+    const n = await lookInside(list, (i, all, e) => { line.textContent = `Looking inside ${i + 1} of ${all}: ${e.title}`; }, () => stop);
+    looking = false;
+    toast(`Looked inside ${n} build${n === 1 ? "" : "s"}`, "ok");
+    await loadCat();
+    run();
+  }
 
   // ---- files and folders that match, share by share
   const card = (sh) => h("div", { class: "panel sr" },
@@ -1008,7 +1147,7 @@ async function pageSearch() {
     const files = r.shares.reduce((a, x) => a + x.files, 0);
     put(filesBox, h("h3", { class: "sr-h" }, "Files and folders"),
       h("div", { class: "countline" }, r.shares.length ? `${files.toLocaleString()} file${files === 1 ? "" : "s"} in ${r.shares.length} of the ${r.searched} shares you've opened` : `No file or folder matches in the ${r.searched} share${r.searched === 1 ? "" : "s"} you've opened.`,
-        h("span", { class: "faint" }, ` · ${(r.ms / 1000).toFixed(1)} s`), r.failed ? h("span", { class: "bad-text" }, ` · ${r.failed} couldn't be searched`) : null,
+        h("span", { class: "faint adv" }, ` · ${(r.ms / 1000).toFixed(1)} s`), r.failed ? h("span", { class: "bad-text" }, ` · ${r.failed} couldn't be searched`) : null,
         r.timed_out ? h("span", { class: "bad-text" }, " · stopped after a minute: some shares weren't searched") : null),
       r.shares.map(card));
   }
@@ -1017,11 +1156,12 @@ async function pageSearch() {
     const v = q.value.trim();
     store.set("search.q", v);
     const my = ++seq;
+    coverage();
     put(filesBox);
     if ([...v].length < 2) {
       put(note, v ? "Type at least two letters." : mode === "bios"
-        ? "Searches the BIOS folders of every build you've opened before, by console and region. Click a name to download it in your browser."
-        : "Searches every build you've opened before, by name or abbreviation. Click a game's name to download it: in your browser when it's one file, through the download queue when it's bigger.");
+        ? "Searches the BIOS folders of every build you've opened or downloaded, by console and region."
+        : "Searches every build you've opened or downloaded, by name or abbreviation (\"smb3\", \"ff7\").");
       put(resultsBox); return;
     }
     put(note, h("span", { class: "spin" }), " Searching…");
@@ -1034,16 +1174,17 @@ async function pageSearch() {
     const filesBtn = h("button", { class: "btn sm", onclick: () => { filesBtn.remove(); searchFiles(v, my); } }, icon("file"), "Search files and folders too");
     put(note, list.length ? `${r.total.toLocaleString()} ${r.total === 1 ? what[0] : what[1]} in the ${r.builds} build${r.builds === 1 ? "" : "s"} ${what[2]}` + (r.total > list.length ? ` (the best ${list.length} shown)` : "")
       : `No ${what[0]} matches in the ${r.builds} build${r.builds === 1 ? "" : "s"} ${what[2]}.`,
-    h("span", { class: "faint" }, ` · ${r.ms} ms`));
+    h("span", { class: "faint adv" }, ` · ${r.ms} ms`));
     put(resultsBox, list.length ? [h("div", { class: "panel gm" }, h("div", { class: "body" }, list.map(mode === "bios" ? biosRow : gameRow))), h("div", {}, filesBtn)] : null);
     if (!list.length) searchFiles(v, my);   // nothing by name: maybe a document, a folder…
   }
   modeSel.addEventListener("change", () => { mode = modeSel.value; store.set("search.mode", mode); q.placeholder = hints[mode]; run(); q.focus(); });
   q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 350); });
   q.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { clearTimeout(timer); run(); } });
-  $("#view").append(h("div", { class: "search-page" }, h("div", { class: "search-bar" }, modeSel, h("div", { class: "search big" }, icon("search"), q)), note, resultsBox, filesBox));
+  $("#view").append(h("div", { class: "search-page" }, h("div", { class: "search-bar" }, modeSel, h("div", { class: "search big" }, icon("search"), q)), cover, note, resultsBox, filesBox));
   q.focus();
   run();
+  loadCat().then(coverage);
 }
 
 // ---------------------------------------------------------------- basket
@@ -1275,7 +1416,7 @@ async function renderShare(s, path) {
   const addBtn = cat ? null : h("button", { class: "btn", title: "Keep this share in the catalog", onclick: async () => {
     try { await api("/catalog/add", { body: { sid } }); toast("Added to the catalog", "ok"); addBtn.remove(); s = await api("/shares/" + sid); } catch (e) { fail(e); }
   } }, icon("plus"), "Add to catalog");
-  toolbar(addBtn, h("button", { class: "btn", onclick: () => runCheck(64) }, icon("pulse"), "Check availability"), allBtn);
+  toolbar(addBtn, h("button", { class: "btn adv", onclick: () => runCheck(64) }, icon("pulse"), "Check availability"), allBtn);
 
   const summary = h("div", { class: "sharesum" });
   const dock = h("div", { class: "selbar dock hidden" });
@@ -1365,9 +1506,9 @@ async function renderShare(s, path) {
     put(summary, listNote, h("div", { class: "sum-line" },
       h("b", {}, fmtBytes(info.size)), cat && cat.listed ? h("span", { class: "faint" }, `(listed as ${cat.listed})`) : null,
       h("span", {}, `${(info.files || 0).toLocaleString()} files`), avail, h("span", { class: "grow" }),
-      h("button", { class: "btn sm ghost", "aria-expanded": detailsOpen ? "true" : "false", onclick: () => { detailsOpen = !detailsOpen; store.set("sharedetails", detailsOpen); renderSummary(); } }, icon("info"), detailsOpen ? "Hide details" : "Details")),
+      h("button", { class: "btn sm ghost adv", "aria-expanded": detailsOpen ? "true" : "false", onclick: () => { detailsOpen = !detailsOpen; store.set("sharedetails", detailsOpen); renderSummary(); } }, icon("info"), detailsOpen ? "Hide details" : "Details")),
     sysChips,
-    detailsOpen ? h("div", { class: "cards" },
+    detailsOpen ? h("div", { class: "cards adv" },
       fact("Format", `v${info.version ?? "?"} · ${info.access || "?"}`, info.created_at ? `published ${new Date(info.created_at).toLocaleDateString()}` : ""),
       fact("Small files", (info.packed || 0).toLocaleString(), "packed several to an article"),
       h("div", { class: "card" }, h("div", { class: "k" }, "Uploader"), h("div", { class: "v mono", title: info.owner_fingerprint || "" }, fp || "—"), h("div", { class: "s" }, info.signature || "")),
@@ -1507,7 +1648,8 @@ async function renderShare(s, path) {
     const note = h("span", { class: "chip info plain insel" });
     return h("tr", { class: "folder-row", onclick: () => goFolder(d.path) },
       h("td", { class: "cb" }, selBox(d.path, { folder: true, size: d.size, count: d.count }, note)),
-      h("td", {}, h("div", { class: "name-cell folder" }, icon("folder"), h("div", { class: "nmwrap" }, h("span", { class: "nm" }, d.name), sub))),
+      h("td", {}, h("div", { class: "name-cell folder" }, icon("folder"), h("div", { class: "nmwrap" },
+        h("a", { class: "nm", href: "#", onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); goFolder(d.path); } }, d.name), sub))),
       h("td", { class: "right nowrap" }, fmtBytes(d.size)), h("td", { class: "muted nowrap" }, `${d.count.toLocaleString()} file${d.count === 1 ? "" : "s"}`,
         d.local ? [" ", h("span", { class: "chip ok plain", title: "This folder is in your download folder" }, "on disk")] : null, " ", note), h("td", { class: "act" }));
   }
@@ -1527,7 +1669,7 @@ async function renderShare(s, path) {
       h("td", { class: "nowrap" }, localChip(f) || (f.size === 0 ? h("span", { class: "chip" }, "empty") : null)),
       h("td", { class: "act" },
         previewable(f) ? h("button", { class: "btn ghost icon", title: "Preview (streamed from Usenet)", onclick: () => preview(f) }, icon("eye")) : null,
-        h("a", { class: "btn ghost icon", title: "Open in a new tab, straight from Usenet", href: fileUrl(f), target: "_blank", onclick: needIndex }, icon("ext")),
+        h("a", { class: "btn ghost icon adv", title: "Open in a new tab, straight from Usenet", href: fileUrl(f), target: "_blank", onclick: needIndex }, icon("ext")),
         h("a", { class: "btn ghost icon", title: "Save to this computer through the browser (not the download folder)", href: fileUrl(f, true), onclick: needIndex }, icon("save"))));
   }
 
@@ -1542,7 +1684,7 @@ async function renderShare(s, path) {
       t.truncated ? [h("span", { class: "muted" }, `showing ${lst.files.length.toLocaleString()}`),
         h("button", { class: "btn sm", onclick: () => load(true) }, `Load ${Math.min(PAGE, t.file_total - lst.files.length).toLocaleString()} more`)] : null,
       lst.hidden ? h("span", { class: "muted" }, `${lst.hidden.toLocaleString()} you already have hidden`) : null,
-      h("span", { class: "faint" }, "Open / save stream the file straight from Usenet — nothing is written on the server."));
+      h("span", { class: "faint adv" }, "Preview and Save come straight from Usenet to this browser, not to your download folder."));
   }
 
   // ---- gallery: box art for game folders (LaunchBox, RetroBat / EmulationStation) and picture folders
@@ -1746,13 +1888,15 @@ async function pageActivity() {
   toolbar(pauseBtn, h("button", { class: "btn primary", onclick: addLinksDialog }, icon("plus"), "Add links"));
   const banner = h("div", { class: "hidden" });
   const qbox = h("div", { class: "panel" }), hbox = h("div", { class: "tablewrap" });
-  $("#view").append(h("div", { class: "stack" }, banner, h("div", {}, h("h2", { style: { fontSize: "15px", margin: "0 0 10px" } }, "Queue"), qbox),
+  const qsum = h("span", { class: "muted small" });   // the queue in all: jobs, what's left, speed and ETA
+  $("#view").append(h("div", { class: "stack" }, banner, h("div", {}, h("div", { class: "qhead" }, h("h2", {}, "Queue"), qsum), qbox),
     h("div", {}, h("h2", { style: { fontSize: "15px", margin: "6px 0 10px" } }, "History"), hbox)));
 
   function renderThrottle(th) {
     th = th || {};
-    put(pauseBtn, th.paused ? [icon("play"), "Resume all"] : [icon("pause"), "Pause all"]);
-    pauseBtn.onclick = () => (th.paused ? resumeAll() : pausePrompt()).catch(fail);
+    put(pauseBtn, [icon("pause"), "Pause all"]);
+    pauseBtn.onclick = () => pausePrompt().catch(fail);
+    pauseBtn.classList.toggle("hidden", !!th.paused);   // paused: the banner's Resume is the one way back
     banner.classList.toggle("hidden", !th.paused && !th.limit);
     put(banner, th.paused
       ? h("div", { class: "note warn bar-note" }, icon("pause"), h("span", { class: "grow" }, `${throttleText(th)}. Downloads wait in the queue and carry on when resumed.`),
@@ -1768,6 +1912,13 @@ async function pageActivity() {
     let d; try { d = await api("/jobs"); } catch { return; }
     if (dragging) return;
     renderThrottle(d.throttle);
+    const held = !!(d.throttle && d.throttle.paused);   // all downloads paused: the rows needn't offer Pause
+    const leftOf = (js) => js.reduce((a, j) => a + Math.max(0, (j.size || 0) - (j.bytes || 0)), 0);
+    const going = d.queue.filter((j) => j.state !== "paused");   // paused one by one: not in the ETA
+    const left = leftOf(d.queue), unknownN = going.filter((j) => !j.size).length;
+    const speed = d.queue.reduce((a, j) => a + (j.rate || 0), 0);
+    put(qsum, d.queue.length ? [`${d.queue.length} job${d.queue.length === 1 ? "" : "s"}`, left || unknownN ? ` · ${fmtBytes(left)}${unknownN ? "+" : ""} left` : "",
+      held ? " · paused" : speed > 0 ? [" · ", h("b", {}, fmtRate(speed)), unknownN ? "" : [" · ETA ", h("b", {}, fmtEta(leftOf(going) / speed))]] : ""] : null);
     const ids = d.queue.map((x) => x.job_id);
     put(qbox, ...(d.queue.length ? d.queue.map((j, idx) => {
       const p = pct(j.bytes, j.size);
@@ -1788,24 +1939,24 @@ async function pageActivity() {
           h("span", { class: "grow" }),
           idx > 0 ? h("button", { class: "btn sm ghost icon", title: "Move to the top of the queue", onclick: act(() => { moved = j.job_id; setTimeout(() => { moved = null; }, 2500); return api("/jobs/reorder", { body: { ids: [j.job_id, ...ids.filter((x) => x !== j.job_id)] } }); }) }, icon("up")) : null,
           j.state === "paused" ? h("button", { class: "btn sm", title: "Let this download carry on", onclick: act(() => api(`/jobs/${j.job_id}/resume`, { body: {} })) }, icon("play"), "Resume")
-            : j.state !== "stopping" ? h("button", { class: "btn sm", title: "Hold this download in the queue; it carries on from where it was when resumed", onclick: act(() => api(`/jobs/${j.job_id}/pause`, { body: {} })) }, icon("pause"), "Pause") : null,
+            : j.state !== "stopping" && !held ? h("button", { class: "btn sm", title: "Hold this download in the queue; it carries on from where it was when resumed", onclick: act(() => api(`/jobs/${j.job_id}/pause`, { body: {} })) }, icon("pause"), "Pause") : null,
           h("button", { class: "btn sm ghost icon", title: "More", onclick: (ev) => menu(ev.currentTarget, [
             SESSION.local && j.out_dir ? ["Show in folder", () => revealJob(j.job_id)] : null,
             ["Stop and move to History", act(() => api(`/jobs/${j.job_id}/stop`, { body: {} }))],
             ["Delete (files stay)", act(async () => { if (await confirmBox("Delete job", `Delete “${jobLabel(j)}”? Downloaded files stay on disk.`, "Delete", "danger solid")) await api(`/jobs/${j.job_id}`, { method: "DELETE" }); }), "danger"],
           ]) }, icon("more"))),
-        waiting ? h("div", { class: "l3" }, h("span", {}, j.state === "paused" ? "Paused" : idx === 0 ? "Next up" : "Waiting"),
+        waiting ? h("div", { class: "l3" }, h("span", {}, j.state === "paused" ? "Paused" : held ? "Waiting · paused with the rest" : idx === 0 ? "Next up" : "Waiting"),
             j.size ? h("span", {}, h("b", {}, fmtBytes(j.size)), j.bytes ? ` · ${fmtBytes(j.bytes)} already done` : "") : h("span", { class: "faint" }, "size known once it starts"),
             j.detail && j.detail !== "paused" ? h("span", { class: "faint" }, j.detail) : null)
           : [h("div", { class: "bar" + (p >= 100 ? " done" : "") }, h("i", { style: { width: p + "%" } })),
             h("div", { class: "l3" }, h("span", {}, h("b", {}, p.toFixed(1) + "%"), ` · ${fmtBytes(j.bytes)} of ${fmtBytes(j.size)}`),
               h("span", {}, h("b", {}, fmtRate(j.rate))), h("span", {}, "ETA ", h("b", {}, fmtEta(j.eta))),
-              j.phase && j.phase !== j.state ? h("span", {}, j.phase) : null, fp ? h("span", {}, fp) : null,
-              j.current ? h("span", { class: "faint", title: j.current }, j.current) : null,
+              j.phase && j.phase !== j.state ? h("span", { class: "adv" }, j.phase) : null, fp ? h("span", { class: "adv" }, fp) : null,
+              j.current ? h("span", { class: "faint adv", title: j.current }, j.current) : null,
               j.missing ? h("span", { class: "chip warn" }, `${j.missing} missing`) : null, j.detail ? h("span", { class: "faint" }, j.detail) : null)]);
       return row;
     }) : [emptyState("activity", "Nothing downloading", "Queue shares from the catalog, a share page, or Add links.")]));
-    put(hbox, d.history.length ? h("table", { class: "t" },
+    put(hbox, d.history.length ? h("table", { class: "t cardrows" },
       h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "State"), h("th", {}, "Detail"), h("th", { class: "right" }, "Size"), h("th", {}, "Finished"), h("th", { class: "act" }, ""))),
       h("tbody", {}, d.history.map((j) => h("tr", {},
         h("td", { class: "title-cell" }, h("div", { class: "t1" }, j.name, j.picked ? h("span", { class: "picked" }, " — " + j.picked) : null),
@@ -1836,7 +1987,40 @@ async function pageActivity() {
 // ---------------------------------------------------------------- Usenet providers (Settings and setup)
 const PRIORITY_HELP = "0 is the highest. Providers with the same priority download together, each up to its own connection count. A provider with a lower priority (a higher number) is only asked for articles the ones above it don't have: use that for a block account.";
 const sw = (checked) => { const i = h("input", { type: "checkbox", checked }); return [i, h("label", { class: "switch" }, i, h("span"))]; };
-const field = (label, input, help) => [h("label", { class: "k" }, label), input, help ? h("div", { class: "help" }, help) : null];
+let fieldN = 0;
+// field: a label, its input and help for a .form grid. The label is tied to the input (the
+// first one inside, for a switch or a row of controls), and the help is read out with it.
+const field = (label, input, help) => {
+  const ctl = input instanceof Element ? (input.matches("input,select,textarea") ? input : input.querySelector("input,select,textarea")) : null;
+  let helpEl = null;
+  if (help) helpEl = h("div", { class: "help" }, help);
+  if (ctl) {
+    if (!ctl.id) ctl.id = "fld" + ++fieldN;
+    if (helpEl) { helpEl.id = ctl.id + "-help"; ctl.setAttribute("aria-describedby", helpEl.id); }
+  }
+  return [h("label", { class: "k", for: ctl ? ctl.id : null }, label), input, helpEl];
+};
+// advField: a setting only shown in advanced mode. why: "changed" (it differs from its default:
+// shown anyway, tagged so) or "warn" (something about it needs seeing: shown anyway).
+const advField = (label, input, help, why) => {
+  const els = field(label, input, help).filter(Boolean);
+  const tag = h("span", { class: "adv-tag" });
+  els[0].append(tag);
+  // mark(why): shown anyway when why is "changed" or "warn"; again after each save
+  const mark = (w) => { for (const el of els) { el.classList.add("adv"); el.classList.toggle("changed", !!w); } tag.textContent = w === "changed" ? "changed" : "advanced"; };
+  mark(why);
+  els.mark = mark;
+  return els;
+};
+// folderNote: what /setup/folder says about a folder: fine, what's wrong, or (amber) that its
+// drive has little room, with the roomiest drive to use instead (use(path) puts that in)
+function folderNote(out, r, use) {
+  out.className = "fstate " + (!r.ok ? "bad" : r.low ? "warn" : "ok");
+  put(out, r.ok ? `${r.exists ? "Folder exists" : "Will be created"}${r.free != null ? " · " + fmtBytes(r.free) + " free" : ""}` : cap(r.error),
+    r.ok && r.low ? ": little room for builds of hundreds of GB to several TB" : null,
+    r.ok && r.roomier && use ? [" ", h("button", { class: "btn xs", type: "button", onclick: () => use(r.roomier.path) }, `Use ${r.roomier.path} (${fmtBytes(r.roomier.free)} free)`)] : null);
+}
+const checkFolder = (path) => api("/setup/folder", { body: { path } }).catch((e) => ({ ok: false, error: e.message }));
 const testMsg = (r) => cap(r.message || "");
 
 // providerDialog edits one provider (a = null: a new one); onSave(provider, isNew) stores it.
@@ -1888,18 +2072,19 @@ const prioChip = (a, list) => {
 // providersTable lists providers with test / edit / remove; status holds test results by id.
 function providersTable(list, { onEdit, onRemove, onToggle, status = {} }) {
   const sorted = [...list].sort((x, y) => (x.priority || 0) - (y.priority || 0));
-  return h("div", { class: "tablewrap" }, h("table", { class: "t" },
-    h("thead", {}, h("tr", {}, h("th", {}, "Provider"), h("th", {}, "User"), h("th", { class: "right" }, "Conns"), h("th", {}, "Priority"), h("th", {}, "Enabled"), h("th", { class: "act" }, ""))),
+  const pc = list.length > 1 ? "" : "adv";   // priorities only matter with more than one provider
+  return h("div", { class: "tablewrap" }, h("table", { class: "t cardrows" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Provider"), h("th", {}, "User"), h("th", { class: "right" }, "Conns"), h("th", { class: pc }, "Priority"), h("th", {}, "Enabled"), h("th", { class: "act" }, ""))),
     h("tbody", {}, sorted.map((a) => {
       const [en, enSw] = sw(a.enabled);
       en.onchange = () => onToggle(a, en.checked);
       const st = status[a.id];
       return h("tr", {},
-        h("td", {}, h("div", { class: "t1", style: { fontWeight: 600 } }, a.name || a.server),
+        h("td", { class: "title-cell" }, h("div", { class: "t1", style: { fontWeight: 600 } }, a.name || a.server),
           h("div", { class: "faint mono" }, `${a.server}:${a.port}${a.ssl ? " · SSL" : ""}`),
           st ? h("div", { class: st.ok ? "test ok" : st.ok === false ? "test bad" : "test" }, testMsg(st)) : null),
         h("td", {}, a.username || h("span", { class: "faint" }, "—")), h("td", { class: "right" }, a.connections),
-        h("td", {}, prioChip(a, list)), h("td", {}, enSw),
+        h("td", { class: pc }, prioChip(a, list)), h("td", {}, enSw),
         h("td", { class: "act" }, h("button", { class: "btn sm", onclick: async () => {
           status[a.id] = { message: "connecting…" }; onToggle(a, a.enabled, true);
           status[a.id] = await testProvider(a); onToggle(a, a.enabled, true);
@@ -2047,9 +2232,8 @@ async function pageSetup(parts) {
     const check = async (input, out, optional) => {
       const v = input.value.trim();
       if (!v && optional) { out.className = "fstate"; out.textContent = "Empty: kept in the data folder, " + info.index_dir_default; return true; }
-      const r = await api("/setup/folder", { body: { path: v } }).catch((e) => ({ ok: false, error: e.message }));
-      out.className = "fstate " + (r.ok ? "ok" : "bad");
-      out.textContent = r.ok ? `${r.exists ? "Folder exists" : "Will be created"}${r.free != null ? " · " + fmtBytes(r.free) + " free" : ""}` : cap(r.error);
+      const r = await checkFolder(v);
+      folderNote(out, r, optional ? null : (p) => { input.value = p; check(input, out); });
       return r.ok;
     };
     let t1 = null, t2 = null;
@@ -2067,9 +2251,9 @@ async function pageSetup(parts) {
     put(card, h("div", { class: "body" }, h("h2", {}, "Folders"),
       h("div", { class: "form" }, h("label", { class: "k" }, "Download folder"), h("div", {}, h("div", { class: "inline nowrap-row" }, dl, browseBtn(dl)), dlState),
         h("div", { class: "help" }, "Each download gets a folder of its own in here, named after the share. Shares can be very large, so pick a drive with room.")),
-      h("details", { class: "more" }, h("summary", {}, "Advanced: where share indexes are kept"),
+      h("details", { class: "more" + (info.index_dir ? "" : " adv") }, h("summary", {}, "Advanced: where share indexes are kept"),
         h("div", { class: "form" }, h("label", { class: "k" }, "Share index folder"), h("div", {}, h("div", { class: "inline nowrap-row" }, ix, browseBtn(ix)), ixState),
-          h("div", { class: "help" }, "Working files, about 200 MB per TB of share, kept while a share is open or its download can resume. Leave it empty to keep them in the data folder."))),
+          h("div", { class: "help" }, "Each share's index, about 100 MB per TB of share, kept so it opens in seconds next time. Leave it empty to keep them in the data folder."))),
       foot(h("button", { class: "btn ghost", onclick: () => go("providers") }, icon("back"), "Back"), h("span", { class: "grow" }), finish)));
     return;
   }
@@ -2088,7 +2272,12 @@ async function pageSettings() {
   setTitle("Settings");
   let s = await api("/settings");
   const view = $("#view");
-  toolbar(h("a", { class: "btn", href: "#/setup" }, "Run setup again"));
+  const [advIn, advSw] = sw(UI.advanced);
+  advIn.addEventListener("change", () => setUI("advanced", advIn.checked));
+  toolbar(h("label", { class: "check adv-toggle", title: "Show the settings and details most people never need" }, advSw, "Show advanced"),
+    h("a", { class: "btn", href: "#/setup" }, "Run setup again"));
+  const def = s.defaults || {};
+  const chg = (k) => (k in def && (s[k] || "") !== (def[k] || "") ? "changed" : "");   // differs from its default
   const panel = (id, ic, title, extra, ...body) => {
     const st = h("span", { class: "saved faint" });
     const p = h("div", { class: "panel", id: "set-" + id }, h("div", { class: "head" }, icon(ic), h("h2", {}, title), h("span", { class: "grow" }), st, extra), h("div", { class: "body" }, ...body));
@@ -2127,7 +2316,7 @@ async function pageSettings() {
   const accounts = panel("providers", "server", "Usenet providers", [
     h("button", { class: "btn", onclick: () => sabImportDialog(s.sab_ini, (sv) => { s = sv; renderAccounts(); }) }, "Import from SABnzbd"),
     h("button", { class: "btn", onclick: () => providerDialog(null, (p) => saveAccounts([...s.accounts, p], "new")) }, icon("plus"), "Add provider")],
-    accBody, h("div", { class: "help", style: { marginTop: "10px" } }, h("b", {}, "Priority: "), PRIORITY_HELP));
+    accBody, h("div", { class: "help" + (s.accounts.length > 1 ? "" : " adv"), style: { marginTop: "10px" } }, h("b", {}, "Priority: "), PRIORITY_HELP));
 
   // downloads
   const d = { complete_dir: h("input", { class: "input", value: s.complete_dir }),
@@ -2149,31 +2338,42 @@ async function pageSettings() {
     tools.unrar_path.replaceChildren(t.unrar ? h("span", { class: "ok-text" }, "Found: " + t.unrar) : h("span", { class: "faint" }, "Not found: 7-Zip is used for RAR archives instead."));
   };
   showTools();
+  // the advanced ones: shown anyway while they differ from their default (7-Zip: while it's not found)
+  const advWhy = (k) => chg(k) || (k === "sevenzip_path" && !(s.tools || {}).sevenzip ? "warn" : "");
+  const advSet = {};
+  const adv = (k, label, input, help) => (advSet[k] = advField(label, input, help, advWhy(k)));
+  const remark = () => { for (const [k, els] of Object.entries(advSet)) els.mark(advWhy(k)); };
+  // the download folder is checked as it's typed: whether it can be used, and how much room it has
+  const dlState = h("div", { class: "fstate" });
+  let dlT = null;
+  const checkDl = async () => folderNote(dlState, await checkFolder(d.complete_dir.value.trim()), (p) => { d.complete_dir.value = p; d.complete_dir.dispatchEvent(new Event("change")); checkDl(); });
+  d.complete_dir.addEventListener("input", () => { clearTimeout(dlT); dlT = setTimeout(checkDl, 400); });
+  checkDl();
   const downloads = panel("downloads", "download", "Downloads", null,
     h("div", { class: "form" },
-      h("label", { class: "k" }, "Download folder"), h("div", { class: "inline nowrap-row" }, d.complete_dir, browseBtn(d.complete_dir)), h("div", { class: "help" }, "Each download gets a folder of its own in here, named after the share."),
-      ...field("Verify SHA-256", sws.verify[1], "Hash each file against the share's index when it completes."),
+      h("label", { class: "k" }, "Download folder"), h("div", {}, h("div", { class: "inline nowrap-row" }, d.complete_dir, browseBtn(d.complete_dir)), dlState),
+      h("div", { class: "help" }, "Each download gets a folder of its own in here, named after the share."),
       ...field("Extract archives", sws.extract[1], "RAR archives and multi-part sets (.z01, .zip.001, .7z.001). Each download can choose otherwise when you queue it."),
       ...field("Also single .zip / .7z", sws.extract_standalone[1], "Off keeps them zipped: ROM, BIOS and asset packs are meant to stay that way."),
       ...field("Delete archives after", sws.delete_archives[1], "Only for sets that extracted cleanly."),
       ...field("Keep free (GB)", d.min_free_gb, "Downloads pause when the download drive gets this full, and carry on by themselves once there's room again. 0 turns it off."),
-      ...field("Notifications", sws.notify[1], "A Windows notification from the tray icon when a download finishes or fails, or the disk fills up."),
-      ...field("Parallel jobs", d.max_parallel_jobs, "How many downloads run at once.")),
-    h("details", { class: "more" }, h("summary", {}, "Advanced"),
-      h("div", { class: "form" },
-        ...field("Missing-article retries", d.missing_retries, "Retry passes (1, 2, 3… minutes apart) for articles missing on every account."),
-        ...field("Streaming connections", d.stream_connections, "At most this many of the provider's connections play files straight from Usenet in the browser; downloads hand them over while you watch."),
-        h("label", { class: "k" }, "Share index folder"), h("div", { class: "inline nowrap-row" }, d.index_dir, browseBtn(d.index_dir)), h("div", { class: "help" }, "Where each share's index is kept once opened. Shares don't change, so nothing here expires by age."),
-        ...field("Full indexes, up to (GB)", d.index_cache_gb, "Downloads, previews and checks use a share's full index (about 100 MB per TB of share). Past this much, the ones used least recently are cut down to their file list, which is zipped and kept, so browsing stays instant; the rest is fetched again when needed. 0 keeps only file lists for shares not in use."),
-        h("label", { class: "k" }, "7-Zip"), d.sevenzip_path, tools.sevenzip_path,
-        h("label", { class: "k" }, "UnRAR"), d.unrar_path, tools.unrar_path)));
+      ...field("Windows notifications", sws.notify[1], "From the tray icon when a download finishes or fails, or the disk fills up."),
+      ...adv("verify", "Verify SHA-256", sws.verify[1], "Hash each file against the share's index when it completes."),
+      ...adv("max_parallel_jobs", "Parallel jobs", d.max_parallel_jobs, "How many downloads run at once."),
+      ...adv("missing_retries", "Missing-article retries", d.missing_retries, "Retry passes (1, 2, 3… minutes apart) for articles missing on every account."),
+      ...adv("stream_connections", "Streaming connections", d.stream_connections, "At most this many of the provider's connections play files straight from Usenet in the browser; downloads hand them over while you watch."),
+      ...adv("index_dir", "Share index folder", h("div", { class: "inline nowrap-row" }, d.index_dir, browseBtn(d.index_dir)), "Where each share's index is kept once opened. Shares don't change, so nothing here expires by age."),
+      ...adv("index_cache_gb", "Full indexes, up to (GB)", d.index_cache_gb, "Downloads, previews and checks use a share's full index (about 100 MB per TB of share). Past this much, the ones used least recently are cut down to their file list, which is zipped and kept, so browsing stays instant; the rest is fetched again when needed. 0 keeps only file lists for shares not in use."),
+      ...adv("sevenzip_path", "7-Zip", d.sevenzip_path, tools.sevenzip_path),
+      ...adv("unrar_path", "UnRAR", d.unrar_path, tools.unrar_path)));
   const nums = new Set(["missing_retries", "max_parallel_jobs", "stream_connections", "index_cache_gb", "min_free_gb"]);
   for (const [k, el] of Object.entries(d)) el.addEventListener("change", async () => {
     if (await saveOn(downloads, { [k]: nums.has(k) ? +el.value : el.value })) {
       if (k === "sevenzip_path" || k === "unrar_path") showTools();
+      remark();
     }
   });
-  for (const [k, [el]] of Object.entries(sws)) el.addEventListener("change", () => saveOn(downloads, { [k]: el.checked }));
+  for (const [k, [el]] of Object.entries(sws)) el.addEventListener("change", async () => { if (await saveOn(downloads, { [k]: el.checked })) remark(); });
 
   // web access
   const cur = h("input", { class: "input", type: "password", autocomplete: "current-password", placeholder: "Current password" });
@@ -2182,7 +2382,8 @@ async function pageSettings() {
   const port = location.port || (location.protocol === "https:" ? "443" : "80");
   const web = panel("web", "shield", "Web access", s.web.has_password ? h("span", { class: "chip ok" }, "password set") : h("span", { class: "chip warn" }, "no password"),
     h("div", { class: "form" },
-      h("div", { class: "full note" }, s.web.has_password ? "Other computers can log in with this password." : ["Without a password only this machine can use the web app. Set one to reach it from other computers — start it with ", h("span", { class: "mono" }, "usnfetch serve --host 0.0.0.0"), ` and open http://<this machine>:${port}/ there.`]),
+      h("div", { class: "full note" }, s.web.has_password ? "Other computers can log in with this password." : ["Without a password only this machine can use the web app. Set one to reach it from other computers.",
+        h("span", { class: "adv" }, " Then start it with ", h("span", { class: "mono" }, "usnfetch serve --host 0.0.0.0"), ` and open http://<this machine>:${port}/ there.`)]),
       s.web.has_password ? field("Current password", cur) : null, field("New password", nw), field("Confirm", nw2),
       h("div", {}), h("div", {}, h("button", { class: "btn", onclick: async () => {
         if (nw.value !== nw2.value) return toast("The new passwords differ", "bad");
@@ -2236,7 +2437,7 @@ async function pageSettings() {
         ...group("layout", "Menu", [["side", "Full menu", mini("side")], ["rail", "Icons only", mini("rail")]]),
         ...group("theme", "Theme", [["dark", "Dark", themePv("dark")], ["light", "Light", themePv("light")], ["system", "Match the system", h("div", { class: "pv sw system" })]]),
         ...group("theme", "Console colours", THEMES.slice(2).map(([v, name]) => [v, name, themePv(v)])),
-        ...(canBrowserNotify() ? [h("label", { class: "k" }, "Notifications"), h("div", {},
+        ...(canBrowserNotify() ? [h("label", { class: "k" }, "Browser notifications"), h("div", {},
           h("label", { class: "check" }, h("input", { type: "checkbox", checked: store.get("ui.notify", false) && Notification.permission === "granted", onchange: async (ev) => {
             const on = ev.target.checked;
             if (on && Notification.permission !== "granted" && (await Notification.requestPermission()) !== "granted") { ev.target.checked = false; toast("The browser said no to notifications", "bad"); return; }
@@ -2273,12 +2474,20 @@ async function pageSystem() {
     toast("Restarting…");
     await backAgain();
   } }, icon("refresh"), "Restart");
-  const resetBtn = h("button", { class: "btn", title: "Wipe caches, history, the catalog or settings, to test from scratch", onclick: () => resetDialog().catch(fail) }, icon("trash"), "Reset…");
+  const resetBtn = h("button", { class: "btn", title: "Wipe caches, history, the catalog or settings", onclick: () => resetDialog().catch(fail) }, icon("trash"), "Reset…");
   toolbar(resetBtn, restartBtn);
+  // the log: always there in advanced mode, behind Show log otherwise (Copy works either way)
+  const logParts = [h("div", { class: "search adv" }, icon("search"), filter), h("label", { class: "check adv" }, follow, "Follow"), h("div", { class: "body adv" }, logs)];
+  const showLog = h("button", { class: "btn sm simple-only", "aria-expanded": "false", onclick: () => {
+    const on = !logParts[0].classList.contains("changed");
+    for (const el of logParts) el.classList.toggle("changed", on);
+    showLog.textContent = on ? "Hide log" : "Show log"; showLog.setAttribute("aria-expanded", on ? "true" : "false");
+    if (on && follow.checked) logs.scrollTop = logs.scrollHeight;
+  } }, "Show log");
   $("#view").append(cards, h("div", { class: "panel" }, h("div", { class: "head" }, icon("system"), h("h2", {}, "Log"), h("span", { class: "grow" }),
-    h("div", { class: "search" }, icon("search"), filter), h("label", { class: "check" }, follow, "Follow"),
+    logParts[0], logParts[1], showLog,
     h("button", { class: "btn sm", title: "Copy the lines shown", onclick: () => copyText(logs.textContent) }, icon("copy"), "Copy")),
-  h("div", { class: "body" }, logs)));
+  logParts[2]));
   let seq = 0;
   every(2000, async () => {
     try {
@@ -2291,13 +2500,13 @@ async function pageSystem() {
           h("div", { class: "s credit" }, "Made by ", h("a", { href: "https://github.com/dothiggity", target: "_blank", rel: "noopener" }, "dothiggity"))),
         h("div", { class: "card" }, h("div", { class: "k" }, "Free space"), h("div", { class: "v" }, fmtBytes(st.disk.free)), h("div", { class: "s", title: st.disk.path }, st.disk.path)),
         h("div", { class: "card" }, h("div", { class: "k" }, "Jobs"), h("div", { class: "v" }, `${st.running} running`), h("div", { class: "s" }, `${st.active} in the queue · ${st.open_shares} shares open`)),
-        h("div", { class: "card", title: "Go: usnfetch's own data. SQLite & other: the share indexes' working memory and the rest." },
+        h("div", { class: "card adv", title: "Go: usnfetch's own data. SQLite & other: the share indexes' working memory and the rest." },
           h("div", { class: "k" }, "Memory"), h("div", { class: "v" }, mem && mem.private ? fmtBytes(mem.private) : "—"),
           h("div", { class: "s" }, mem && mem.private ? `Go ${fmtBytes(mem.go_heap_in_use)} · SQLite & other ${fmtBytes(mem.other || 0)}` : "")),
-        ic ? h("div", { class: "card", title: ic.path + "\nFull indexes: what downloads, previews and checks use, kept by last use up to the limit in Settings.\nFile lists: what browsing uses, zipped while idle." + (ic.art ? `\nBox art shown so far: ${ic.art} pictures.` : "") },
+        ic ? h("div", { class: "card adv", title: ic.path + "\nFull indexes: what downloads, previews and checks use, kept by last use up to the limit in Settings.\nFile lists: what browsing uses, zipped while idle." + (ic.art ? `\nBox art shown so far: ${ic.art} pictures.` : "") },
           h("div", { class: "k" }, "Share index cache"), h("div", { class: "v" }, fmtBytes(ic.on_disk + (ic.art_disk || 0))),
           h("div", { class: "s" }, `${ic.full} full (${fmtBytes(ic.full_disk)} of ${fmtBytes(ic.limit)}) · ${ic.lists} file list${ic.lists === 1 ? "" : "s"} (${fmtBytes(ic.lists_disk)})` + (ic.art ? ` · box art ${fmtBytes(ic.art_disk)}` : ""))) : null,
-        h("div", { class: "card wide" }, h("div", { class: "k" }, "Accounts"), h("div", { class: "v", style: { fontSize: "14px", whiteSpace: "normal" } }, st.accounts || "none configured"), h("div", { class: "s", title: st.data_dir }, "data: " + st.data_dir)));
+        h("div", { class: "card wide" }, h("div", { class: "k" }, "Usenet providers"), h("div", { class: "v", style: { fontSize: "14px", whiteSpace: "normal" } }, st.accounts || "none yet"), h("div", { class: "s adv", title: st.data_dir }, "data: " + st.data_dir)));
       const l = await api("/logs?after=" + seq);
       if (l.lines.length) {
         all.push(...l.lines);
@@ -2326,7 +2535,7 @@ async function resetDialog() {
   const opts = [
     ["caches", true, "Caches", `Share indexes, box art, game and BIOS search lists: ${n(r.caches.indexes, "index", "indexes")}, ${n(r.caches.art, "picture", "pictures")}, ${fmtBytes(r.caches.bytes)}. Each build's index is fetched again the first time you open it.`],
     ["opened", true, "What opening shares learned", `For the ${n(r.opened, "share", "shares")} you've opened or downloaded: when, the details and what's inside. The catalog looks never-opened.`],
-    ["health", false, "Health checks", `Link OK / Gone and availability, for ${n(r.health, "share", "shares")}. They're checked again as shares are opened.`],
+    ["health", false, "Health checks", `Found, Verified, Gone and the rest, for ${n(r.health, "share", "shares")}. They're checked again as shares are opened.`],
     ["catalog", false, "The catalog", `The ${n(r.catalog, "link", "links")} in it. Import your list again afterwards.`],
     ["jobs", false, "Download queue and history", `${n(r.jobs, "download", "downloads")}. The downloaded files stay where they are.`],
     ["settings", false, "Settings", "Back to their defaults: download folder, speed, schedule, extracting, everything. Your web password stays."],
@@ -2344,13 +2553,21 @@ async function resetDialog() {
     return h("label", { class: "choice" }, boxes[k], h("div", {}, h("div", { class: "cl" }, label), h("div", { class: "ch" }, help)));
   });
   const preset = (keys) => { for (const [k, b] of Object.entries(boxes)) b.checked = keys.includes(k); sync(); };
+  const CLEAR = ["caches", "opened"], ALL = ["caches", "opened", "health", "catalog", "jobs", "settings"];
+  // without advanced mode: two choices; with it, every box
+  const simple = h("div", { class: "choices simple-only" }, [
+    ["caches", "Clear caches", "Share indexes, box art, the search lists and what opening builds learned. Each build fetches its index again the first time you open it.", CLEAR],
+    ["over", "Start over", "Everything back to the first start: the catalog, the queue and history, health checks and settings. Your Usenet providers stay.", ALL],
+  ].map(([v, label, help, keys]) => h("label", { class: "choice" }, h("input", { type: "radio", name: "rmode", checked: v === "caches", onchange: () => { preset(keys); keep.checked = true; } }),
+    h("div", {}, h("div", { class: "cl" }, label), h("div", { class: "ch" }, help)))));
   modal({ title: "Reset usnfetch", wide: true, body: [
-    h("div", { class: "muted" }, "Start over, to test from scratch. Pick what to wipe: it happens as usnfetch restarts, and your downloaded files in ",
+    h("div", { class: "muted" }, "Pick what to wipe. It happens as usnfetch restarts, and your downloaded files in ",
       h("span", { class: "mono" }, r.complete_dir), " are never touched."),
-    h("div", { class: "row-btns" }, h("span", { class: "faint small" }, "Quick picks:"),
-      h("button", { class: "btn sm", onclick: () => preset(["caches", "opened"]) }, "Fresh look"),
-      h("button", { class: "btn sm", onclick: () => preset(["caches", "opened", "health", "catalog", "jobs", "settings"]) }, "Everything")),
-    h("div", { class: "choices" }, rows), keepRow,
+    simple,
+    h("div", { class: "row-btns adv" }, h("span", { class: "faint small" }, "Quick picks:"),
+      h("button", { class: "btn sm", onclick: () => preset(CLEAR) }, "Clear caches"),
+      h("button", { class: "btn sm", onclick: () => preset(ALL) }, "Everything")),
+    h("div", { class: "choices adv" }, rows), h("div", { class: "adv" }, keepRow),
     r.downloading ? h("div", { class: "note bad" }, "A download is running: pause it or let it finish first.") : null,
     r.can_restart ? null : h("div", { class: "note" }, "This usnfetch can't restart itself (it runs in a terminal), so the reset happens the next time you start it."),
   ], actions: [{ label: "Cancel" }, { label: r.can_restart ? "Reset and restart" : "Reset at the next start", kind: "danger solid", ref: (b) => { btn.el = b; sync(); }, run: async () => {

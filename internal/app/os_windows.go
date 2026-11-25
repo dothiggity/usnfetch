@@ -82,3 +82,10 @@ func DiskTotal(path string) (int64, error) {
 	}
 	return int64(total), nil
 }
+
+// LocalDrive: a drive root ("D:\") that is a fixed disk in this computer, not a network, cloud,
+// removable or optical one.
+func LocalDrive(root string) bool {
+	p, err := windows.UTF16PtrFromString(root)
+	return err == nil && windows.GetDriveType(p) == windows.DRIVE_FIXED
+}

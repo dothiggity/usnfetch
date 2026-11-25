@@ -88,6 +88,9 @@ func defaultSettings() Settings {
 	}
 }
 
+// DefaultSettings: what a fresh install starts with.
+func DefaultSettings() Settings { return defaultSettings() }
+
 func RandomID(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)

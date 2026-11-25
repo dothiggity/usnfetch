@@ -96,7 +96,12 @@ type Throttle struct {
 	Skip   float64 `json:"skip,omitempty"`  // schedule pauses are ignored until then (resumed by hand)
 }
 
+// fmtMBps: a speed limit for people: "10 MB/s", "2.5 MB/s", and under 1 MB/s in KB/s ("40 KB/s",
+// not "0 MB/s").
 func fmtMBps(v float64) string {
+	if v > 0 && v < 1 {
+		return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.1f", v*1000), "0"), ".") + " KB/s"
+	}
 	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.1f", v), "0"), ".") + " MB/s"
 }
 

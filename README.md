@@ -21,8 +21,8 @@ shares. You bring your own links, and what you download is up to you.
   text streamed straight from Usenet.
 - **Download what you tick, or the whole thing.** A review first shows the size next to your free
   space, where it lands, what's already on disk and which archives it'll unpack.
-- **Search every build you've opened** for a game ("mario 3", "smb3", "ff7") or a BIOS ("ps1 bios
-  usa"), and click the result to download it.
+- **Search every build you've opened or downloaded** for a game ("mario 3", "smb3", "ff7") or a
+  BIOS ("ps1 bios usa"), and download it from the result.
 - **Keep a catalog** of your links, filtered by launcher and device (Batocera, RetroBat, Steam
   Deck, Raspberry Pi…), with what's inside each build and whether it's still on your provider.
 - **A proper queue:** reorder, pause, speed limits, a weekly schedule. It pauses before the disk
@@ -53,16 +53,24 @@ SABnzbd, passwords and all) and where downloads should go. Then bring in your li
 share. Single `.zip` and `.7z` files stay zipped by default, since ROM and BIOS packs are meant to;
 RAR and multi-part sets are unpacked. You can change both per download.
 
-**Search downloads.** A game that's one file of up to 1 GB, and any BIOS file, goes straight to
-your browser's downloads. Bigger games, and games of several discs, go through the queue.
+**Search downloads.** Each result's Download button says where it goes. On the computer running
+usnfetch, a game that's one file of up to 1 GB, and any BIOS file, goes to your browser's
+downloads; from another computer it goes to usnfetch's download folder. A link under the button
+does it the other way. Bigger games, and games of several discs, go through the queue. Search
+only knows builds you've opened or downloaded, and offers to look inside the rest.
 
 **More than one provider.** Priority 0 is the highest, and providers that share the top priority
 download together. A lower one (a bigger number) is only asked for what the others are missing,
 which suits a block account. Give each the full connection count your plan allows (Easynews: 60).
 
-**Starting over.** A share's Details → Forget this build deletes what's saved about it, so it
-opens like the first time. System → Reset does that for everything you tick, up to settings and
-the first-run setup. Neither touches your downloaded files.
+**Advanced settings.** Settings keeps what most people never touch out of the way: hash checks,
+parallel jobs, retries, the index cache, the 7-Zip path, a share's details. Turn on Show advanced
+at the top of Settings to see it all. A setting you've changed stays in view either way.
+
+**Starting over.** System → Reset clears the caches or starts over; with Show advanced on you
+tick exactly what, up to settings and the first-run setup. A share's Details → Forget this build
+(also with Show advanced on) does it for one build, so it opens like the first time. Neither
+touches your downloaded files.
 
 **Using it from another machine.** Set a web password first (Settings → Web access, or `usnfetch
 set-password`), start it with `--host 0.0.0.0`, and browse to `http://<that machine>:7979/`.
@@ -84,8 +92,8 @@ instead, say on a USB stick.
 
 Each share you open leaves its index there (about 100 MB per TB), so it opens instantly next time.
 The most recent ones are kept up to 20 GB; older ones are cut down to their zipped file list,
-which still browses instantly. Settings → Downloads → Advanced changes the limit, and the System
-page shows what it all takes.
+which still browses instantly. With Show advanced on, Settings → Downloads changes the limit, and
+the System page shows what it all takes.
 
 Provider passwords are encrypted with Windows' data protection. Coming from the old Python
 version? Point it at the same folder and it picks up your jobs, catalog and settings.

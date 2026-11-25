@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -139,6 +140,9 @@ func folderCheck(p string) map[string]any {
 	}
 	p = filepath.Clean(p)
 	out["path"] = p
+	if why := badFolderName(p); why != "" {
+		return bad(why)
+	}
 	if st, err := os.Stat(p); err == nil {
 		if !st.IsDir() {
 			return bad("that is a file, not a folder")
@@ -169,7 +173,63 @@ func folderCheck(p string) map[string]any {
 	_ = os.Remove(name)
 	if free, err := app.DiskFree(probe); err == nil {
 		out["free"] = free
+		if free < lowFree {
+			out["low"] = true
+			if d, dfree := roomiestDrive(); d != "" && dfree > 2*free && dfree >= lowFree && !strings.EqualFold(filepath.VolumeName(p), filepath.VolumeName(d)) {
+				out["roomier"] = map[string]any{"path": filepath.Join(d, "usnfetch"), "free": dfree}
+			}
+		}
 	}
 	out["ok"] = true
 	return out
+}
+
+// lowFree: below this much free space, setup warns: builds run from a hundred GB to several TB.
+const lowFree = 100e9
+
+// badFolderName: why Windows can't make a folder of that name ("" if it can): a character
+// it doesn't allow, a name it keeps for devices (CON, NUL, COM1…), or one ending in a dot or
+// space. Elsewhere only a NUL byte is refused.
+func badFolderName(p string) string {
+	if strings.ContainsRune(p, 0) {
+		return "that name has a character folders can't have"
+	}
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	rest := strings.TrimPrefix(p, filepath.VolumeName(p))
+	for _, part := range strings.FieldsFunc(rest, func(r rune) bool { return r == '\\' || r == '/' }) {
+		if i := strings.IndexFunc(part, func(r rune) bool { return strings.ContainsRune(`<>:"|?*`, r) || r < 0x20 }); i >= 0 {
+			return fmt.Sprintf("folder names can't have %q in them (%s)", part[i:i+1], part)
+		}
+		if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
+			return fmt.Sprintf("folder names can't end in a dot or a space (%q)", part)
+		}
+		base, _, _ := strings.Cut(strings.ToUpper(part), ".")
+		switch strings.TrimRight(base, " ") {
+		case "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+			"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+			return fmt.Sprintf("Windows keeps the name %q for a device: pick another", part)
+		}
+	}
+	return ""
+}
+
+// roomiestDrive: the local disk with the most free space (Windows: C: to Z:, not network,
+// cloud or removable drives), "" elsewhere.
+func roomiestDrive() (string, int64) {
+	if runtime.GOOS != "windows" {
+		return "", 0
+	}
+	best, most := "", int64(0)
+	for c := 'C'; c <= 'Z'; c++ {
+		d := string(c) + `:\`
+		if !app.LocalDrive(d) {
+			continue
+		}
+		if free, err := app.DiskFree(d); err == nil && free > most {
+			best, most = d, free
+		}
+	}
+	return best, most
 }

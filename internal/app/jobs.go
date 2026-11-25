@@ -83,8 +83,52 @@ type Job struct {
 	doneCount   int64
 	exact       map[string]bool
 	prefixes    []string
-	pauseStop   bool // stopped by a pause: goes back to the queue
-	holdStop    bool // paused on its own: waits in the queue, as "paused", until resumed
+	pauseStop   bool         // stopped by a pause: goes back to the queue
+	holdStop    bool         // paused on its own: waits in the queue, as "paused", until resumed
+	moved       int64        // bytes its finished tasks moved this run (setTask): its speed goes by these
+	seen        []byteSample // what it had moved, as it's looked at while downloading (jobRate)
+}
+
+// addBytes: more of the job is done (a file finished, or found already there).
+func (j *Job) addBytes(n int64) {
+	j.mu.Lock()
+	j.bytesPrev += n
+	j.mu.Unlock()
+}
+
+type byteSample struct {
+	t time.Time
+	n int64
+}
+
+// jobRate: the job's speed, from the bytes it moved in the last 10 seconds across all its
+// files. The engine's own speed is per task, and a job of many small files runs a task per
+// file, each too short-lived to have one, so the job would read 0 B/s while moving along.
+// moved only ever grows (bytes fetched, not the job's total, which jumps when a part-done file
+// carries on and drops when a file ends incomplete). taskRate stands in until there's enough
+// to go on, and after a gap in the samples (a pause, or nobody looking). j.mu held.
+func (j *Job) jobRate(moved int64, taskRate float64) float64 {
+	now := time.Now()
+	if j.State != "downloading" {
+		j.seen = j.seen[:0]
+		return taskRate
+	}
+	if n := len(j.seen); n > 0 && (now.Sub(j.seen[n-1].t) > 5*time.Second || moved < j.seen[n-1].n) {
+		j.seen = j.seen[:0] // samples from before a gap say nothing about now
+	}
+	bytes := moved
+	if n := len(j.seen); n == 0 || now.Sub(j.seen[n-1].t) >= 500*time.Millisecond {
+		j.seen = append(j.seen, byteSample{now, bytes})
+	}
+	for len(j.seen) > 1 && now.Sub(j.seen[1].t) >= 10*time.Second {
+		j.seen = j.seen[1:] // keep one sample at least 10 s old, as the start of the window
+	}
+	old := j.seen[0]
+	dt := now.Sub(old.t).Seconds()
+	if dt < 2 {
+		return taskRate
+	}
+	return max(0, float64(bytes-old.n)/dt)
 }
 
 // LayoutShare: see Job.Layout.
@@ -235,7 +279,7 @@ func (j *Job) View(full bool) JobView {
 	if j.task != nil {
 		if st, phase := j.task.Progress(); st != nil {
 			v.Bytes = j.bytesPrev + st.Bytes()
-			v.Rate = st.Rate()
+			v.Rate = j.jobRate(j.moved+st.Moved(), st.Rate())
 			v.Missing, v.ConnErrors, v.Phase = st.Missing.Load(), st.Errors.Load(), phase
 			if v.Rate > 0 {
 				eta := float64(j.Size-v.Bytes) / v.Rate
@@ -244,6 +288,10 @@ func (j *Job) View(full bool) JobView {
 		}
 	} else if j.State == "completed" {
 		v.Bytes = j.Size
+	} else if j.State == "downloading" { // between two files' tasks: still moving
+		v.Rate = j.jobRate(j.moved, 0)
+	} else {
+		j.seen = j.seen[:0]
 	}
 	if full {
 		v.Files, v.FileSel, v.Result = j.Files, j.FileSel, j.Result
@@ -1006,6 +1054,11 @@ func (t *topFolder) top() string {
 
 func (m *Manager) setTask(j *Job, t engine.Task) {
 	j.mu.Lock()
+	if j.task != nil { // what the task moved counts on for the job's speed
+		if st, _ := j.task.Progress(); st != nil {
+			j.moved += st.Moved()
+		}
+	}
 	j.task = t
 	j.mu.Unlock()
 }
@@ -1176,7 +1229,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 		j.filePos = [2]int{i + 1, len(chosen)}
 		j.mu.Unlock()
 		if m.Store.IsDone(j.ID, f.Path) {
-			j.bytesPrev += f.Size
+			j.addBytes(f.Size)
 			continue
 		}
 		if j.cancel.Load() {
@@ -1216,7 +1269,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 		}
 		if ok {
 			markDone(f.Path)
-			j.bytesPrev += f.Size
+			j.addBytes(f.Size)
 			m.SaveState()
 		} else if !eng.Stopped() {
 			why := "incomplete"
@@ -1239,7 +1292,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 		var todo []share.FileEntry
 		for _, f := range whole {
 			if m.Store.IsDone(j.ID, f.Path) {
-				j.bytesPrev += f.Size
+				j.addBytes(f.Size)
 			} else {
 				todo = append(todo, f)
 			}
@@ -1285,7 +1338,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 			}
 			for _, w := range wanted {
 				if landed[w.File.Path] {
-					j.bytesPrev += w.File.Size
+					j.addBytes(w.File.Size)
 				}
 			}
 			m.SaveState()

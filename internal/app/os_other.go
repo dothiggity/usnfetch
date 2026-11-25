@@ -51,3 +51,6 @@ func DiskTotal(path string) (int64, error) {
 	}
 	return int64(st.Blocks) * int64(st.Bsize), nil
 }
+
+// LocalDrive: drives are a Windows notion; elsewhere there's one tree.
+func LocalDrive(root string) bool { return false }

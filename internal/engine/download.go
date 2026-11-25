@@ -105,6 +105,7 @@ func (b *Bitmap) Flush() error {
 type Stats struct {
 	Total   int64
 	bytes   atomic.Int64
+	moved   atomic.Int64 // what Add brought in (bytes less what was done before it started)
 	Missing atomic.Int64
 	Errors  atomic.Int64
 	Retries atomic.Int64
@@ -126,10 +127,11 @@ func NewStats(total, already int64) *Stats {
 
 func (s *Stats) Add(n int64) {
 	s.bytes.Add(n)
+	s.moved.Add(n)
 	now := time.Now()
 	s.mu.Lock()
 	s.window = append(s.window, sample{now, n})
-	for len(s.window) > 0 && now.Sub(s.window[0].t) > 10*time.Second {
+	for len(s.window) > 0 && now.Sub(s.window[0].t) > rateWindow {
 		s.window = s.window[1:]
 	}
 	s.mu.Unlock()
@@ -137,22 +139,30 @@ func (s *Stats) Add(n int64) {
 
 func (s *Stats) Bytes() int64 { return s.bytes.Load() }
 
-// Rate in bytes/second over the last 10 seconds.
+// Moved: the bytes this task fetched itself (Bytes less what was done before it started).
+func (s *Stats) Moved() int64 { return s.moved.Load() }
+
+// rateWindow: the speed is what came in over this long.
+const rateWindow = 10 * time.Second
+
+// Rate in bytes/second over the last 10 seconds, or since the start when that's sooner (at
+// least a second). One sample is enough: slow downloads of small files add one now and then.
+// Nothing in the last 10 seconds is 0, not the speed from before a stall.
 func (s *Stats) Rate() float64 {
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.window) < 2 {
-		return 0
+	for len(s.window) > 0 && now.Sub(s.window[0].t) > rateWindow {
+		s.window = s.window[1:]
 	}
-	span := s.window[len(s.window)-1].t.Sub(s.window[0].t).Seconds()
-	if span <= 0 {
+	if len(s.window) == 0 {
 		return 0
 	}
 	var sum int64
 	for _, w := range s.window {
 		sum += w.n
 	}
-	return float64(sum) / span
+	return float64(sum) / max(min(rateWindow, now.Sub(s.Start)).Seconds(), 1)
 }
 
 // Task is anything a job runs that can be watched and stopped (Engine, PackFetcher).
