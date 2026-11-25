@@ -1,15 +1,15 @@
 # usnfetch
 
-usnfetch downloads usn:// shares from your own Usenet provider. A share is a collection of
-files, encrypted and posted to Usenet, that you open with a `usn://` link. usnfetch runs in the
-background with a web page you keep open in a tab, like SABnzbd or the *arr apps.
+usnfetch downloads `usn://` links from your own Usenet provider. Each link opens a share: a
+collection of files, encrypted and posted to Usenet. usnfetch runs in the background with a web
+page you keep open in a tab, like SABnzbd or the *arr apps.
 
 I wanted that for `usn://` links. Getting a share into SABnzbd meant a bridge app that never quite
 worked, so usnfetch does the whole job itself. It fetches the articles, decrypts them and checks
 every file against the share's SHA-256.
 
-It's not affiliated with any other app and doesn't come with any shares. You bring your own links,
-and what you download is up to you.
+It's an independent project and doesn't come with any shares. You bring your own links, and what
+you download is up to you.
 
 ![Six screens in turn: the box-art gallery, Settings → Libraries, a download into a library, Search, the download queue and the catalog](docs/screenshots.png)
 
