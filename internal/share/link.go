@@ -1,5 +1,5 @@
-// Package share reads usn:// shares: links, manifests and their signatures, folder
-// keys, encrypted core indexes, and the per-share SQLite index built from them.
+// Package share reads usn:// shares: links, manifests and their signatures, folder keys,
+// encrypted core indexes, and the per-share SQLite index built from them.
 package share
 
 import (
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Link is a parsed share link.
@@ -61,45 +62,83 @@ func DecodeLink(link string) (string, error) {
 			return "", errors.New("share link decodes to something other than usenet://")
 		}
 		return out, nil
-	case 1: // legacy field-packed v1
-		p := 1
-		need := func(n int) error {
-			if p+n > len(data) {
-				return errors.New("this usn:// link is cut short: check that it was copied in full")
-			}
-			return nil
+	case 1: // the old field-packed form
+		if out, ok := DecodeV1(data, false); ok {
+			return out, nil
 		}
-		if err := need(3); err != nil {
-			return "", err
-		}
-		hasKey := data[p] != 0
-		p++
-		n := int(binary.BigEndian.Uint16(data[p:]))
-		p += 2
-		if err := need(n + 2); err != nil {
-			return "", err
-		}
-		group := string(data[p : p+n])
-		p += n
-		n = int(binary.BigEndian.Uint16(data[p:]))
-		p += 2
-		if err := need(n + 16); err != nil {
-			return "", err
-		}
-		msgid := string(data[p : p+n])
-		p += n
-		folder := hex.EncodeToString(data[p : p+16])
-		p += 16
-		out := fmt.Sprintf("usenet://%s/%s/%s", group, msgid, folder)
-		if hasKey {
-			if err := need(32); err != nil {
-				return "", err
-			}
-			out += "#" + hex.EncodeToString(data[p:p+32])
-		}
-		return out, nil
+		return "", errors.New("this usn:// link is cut short: check that it was copied in full")
 	}
 	return "", fmt.Errorf("this usn:// link uses an unknown encoding (version %d): check that it was copied in full", data[0])
+}
+
+// DecodeV1 reads the old field-packed usn:// payload (wire v1): 1, then whether it carries a
+// key, the newsgroup's length and the newsgroup, the message ID's length (2 bytes) and the
+// message ID, the 16-byte folder ID and, if it has one, the 32-byte key. The publisher's client
+// gives the newsgroup's length one byte; usnfetch used to read two. Both are tried, and the one
+// that accounts for every byte of the link wins. strict: only such an exact fit; otherwise a
+// link with bytes left over is read too (one-byte first, as the publisher's client does).
+func DecodeV1(data []byte, strict bool) (string, bool) {
+	for _, exact := range []bool{true, false} {
+		if !exact && strict {
+			break
+		}
+		for _, wide := range []bool{false, true} {
+			if out, ok := v1Layout(data, wide, exact); ok {
+				return out, true
+			}
+		}
+	}
+	return "", false
+}
+
+// v1Layout reads a v1 payload with a one-byte (or, wide, two-byte) newsgroup length.
+func v1Layout(data []byte, wide, exact bool) (string, bool) {
+	if len(data) < 3 || data[0] != 1 {
+		return "", false
+	}
+	hasKey := data[1] != 0
+	p := 2
+	var n int
+	if wide {
+		if p+2 > len(data) {
+			return "", false
+		}
+		n = int(binary.BigEndian.Uint16(data[p:]))
+		p += 2
+	} else {
+		n = int(data[p])
+		p++
+	}
+	if p+n+2 > len(data) {
+		return "", false
+	}
+	group := data[p : p+n]
+	p += n
+	m := int(binary.BigEndian.Uint16(data[p:]))
+	p += 2
+	if p+m+16 > len(data) {
+		return "", false
+	}
+	msgid := data[p : p+m]
+	p += m
+	folder := data[p : p+16]
+	p += 16
+	var key []byte
+	if hasKey {
+		if p+32 > len(data) {
+			return "", false
+		}
+		key = data[p : p+32]
+		p += 32
+	}
+	if exact && p != len(data) || !utf8.Valid(group) || !utf8.Valid(msgid) || !strings.Contains(string(msgid), "@") {
+		return "", false
+	}
+	out := fmt.Sprintf("usenet://%s/%s/%s", group, msgid, hex.EncodeToString(folder))
+	if hasKey {
+		out += "#" + hex.EncodeToString(key)
+	}
+	return out, true
 }
 
 // LinkKey: what tells shares apart, their manifest article and folder ID. Links with the

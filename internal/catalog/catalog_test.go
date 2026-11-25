@@ -47,39 +47,39 @@ func byLink(es []Entry) map[string]Entry {
 // --- ported from test_catalog.py ---------------------------------------------
 
 func exportedLayout(l []string) []Entry {
-	return ParseText(fmt.Sprintf(`USN Copy Links - portal
-Extracted from HAR capture
+	return ParseText(fmt.Sprintf(`Example Copy Links - sample portal export
+Made up for the tests
 
 =====
 SOURCE: shopA  (3 builds, 5 links)
 =====
 
-XBOX Master Game Collection [CCI]
-SKU: XBOXDL
+Sample Disc Collection [CCI]
+SKU: SMPDISC
 %[1]s
 
-45TB RetroMAX DOWNLOAD For Windows PC - Fully Loaded - Plug and Play  [45TB]
-SKU: 45TBRBDL
+45TB Sample Archive For A Big Drive - Everything In It - Plug and Go  [45TB]
+SKU: SMP45
 Drive R (Main) - 1 of 3:
 %[2]s
 Drive S - 2 of 3:
 %[3]s
 
-1TB Retrobat for ROG Ally  [1TB]
-SKU: 1TBRB
+1TB Sample Handheld Set  [1TB]
+SKU: SMP1
 %[4]s
 
 =====
 SOURCE: shopB  (2 builds, 2 links)
 =====
 
-1TB Retrobat for Legion Go  [1TB]
-SKU: 1TBRBLG
+1TB Sample Handheld Set, Second Shop  [1TB]
+SKU: SMP1B
 %[4]s
 
-All Guns Blazing v43: 420 Light Gun Games  [512GB]
+Sample Light-Gun Set v43: 420 Test Files  [512GB]
 Info: https://example.invalid/agb
-512GB-AllGunsBlazingV43-LightGunLunatics-PC-Batocera:
+512GB-SampleLightGunV43-TestFilesTeamXYZ-PC-Batocera:
 %[5]s
 `, l[0], l[1], l[2], l[3], l[4]), "")
 }
@@ -97,22 +97,22 @@ func TestExportedLayout(t *testing.T) {
 	}
 	by := byLink(es)
 	x := by[l[0]]
-	if x.Title != "XBOX Master Game Collection [CCI]" || x.Listed != "" || x.Size != nil || x.SKU != "XBOXDL" || x.Source != "shopA" {
-		t.Errorf("xbox entry: %+v (size %s)", x, sizeStr(x.Size))
+	if x.Title != "Sample Disc Collection [CCI]" || x.Listed != "" || x.Size != nil || x.SKU != "SMPDISC" || x.Source != "shopA" {
+		t.Errorf("disc collection entry: %+v (size %s)", x, sizeStr(x.Size))
 	}
 	r, s := by[l[1]], by[l[2]]
 	if r.Variant != "Drive R (Main) - 1 of 3" || s.Variant != "Drive S - 2 of 3" || r.Listed != "45TB" || r.Size != nil {
 		t.Errorf("drive entries: %+v / %+v", r, s)
 	}
 	rb := by[l[3]]
-	if !slices.Equal(rb.Also, []string{"1TB Retrobat for Legion Go"}) || sizeStr(rb.Size) != "1000000000000" || rb.Source != "shopA" {
-		t.Errorf("retrobat entry: %+v (size %s)", rb, sizeStr(rb.Size))
+	if !slices.Equal(rb.Also, []string{"1TB Sample Handheld Set, Second Shop"}) || sizeStr(rb.Size) != "1000000000000" || rb.Source != "shopA" {
+		t.Errorf("handheld set entry: %+v (size %s)", rb, sizeStr(rb.Size))
 	}
 	agb := by[l[4]]
 	if sizeStr(agb.Size) != "512000000000" || agb.Info != "https://example.invalid/agb" || agb.Source != "shopB" {
 		t.Errorf("agb entry: %+v (size %s)", agb, sizeStr(agb.Size))
 	}
-	if agb.Title != "All Guns Blazing v43: 420 Light Gun Games" {
+	if agb.Title != "Sample Light-Gun Set v43: 420 Test Files" {
 		t.Errorf("agb title %q", agb.Title)
 	}
 	for _, e := range es {
@@ -126,7 +126,7 @@ func TestExportedLayout(t *testing.T) {
 func TestJobNames(t *testing.T) {
 	l := testLinks()
 	by := byLink(exportedLayout(l))
-	if got := JobName(by[l[4]], 90); got != "512GB-AllGunsBlazingV43-LightGunLunatics-PC-Batocera" {
+	if got := JobName(by[l[4]], 90); got != "512GB-SampleLightGunV43-TestFilesTeamXYZ-PC-Batocera" {
 		t.Errorf("agb job name %q", got)
 	}
 	nr, ns := JobName(by[l[1]], 90), JobName(by[l[2]], 90)
@@ -136,8 +136,8 @@ func TestJobNames(t *testing.T) {
 	if max(len([]rune(nr)), len([]rune(ns))) > 90 {
 		t.Errorf("job names longer than 90: %q / %q", nr, ns)
 	}
-	if got := JobName(by[l[0]], 90); got != "XBOX Master Game Collection [CCI]" {
-		t.Errorf("xbox job name %q", got)
+	if got := JobName(by[l[0]], 90); got != "Sample Disc Collection [CCI]" {
+		t.Errorf("disc collection job name %q", got)
 	}
 }
 

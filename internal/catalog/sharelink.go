@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"strings"
 	"unicode/utf8"
+
+	"usnfetch/internal/share"
 )
 
 // fallbackTitle is _fallback_title: "USN_" + the first 12 characters of the
@@ -71,7 +73,10 @@ func decodeShareLink(link string) (string, bool) {
 			return "", false
 		}
 		return string(data[1:]), true
-	case 1: // v1: [has_key][u16 len][newsgroup][u16 len][msgid][16 bytes folder id][32 bytes key]
+	case 1: // v1: [has_key][newsgroup length: 1 byte, or 2 in usnfetch's old reading][newsgroup][u16 len][msgid][16 bytes folder id][32 bytes key]
+		if out, ok := share.DecodeV1(data, true); ok { // a link that fits either layout exactly
+			return out, true
+		}
 		hasKey := data[1] != 0
 		group, pos, ok := readField(data, 2)
 		if !ok {
