@@ -41,6 +41,11 @@ func (s *Server) biosFile(folderID string) string {
 // them: the systems with the share's details (info), the games and BIOS files in files of
 // their own.
 func (s *Server) saveInside(ix *share.Index, info map[string]any) {
+	if s.insideKept(ix, info) { // worked out from this very index before: nothing to do over
+		return
+	}
+	info["packed"] = ix.PackedFiles()
+	info["inside_of"] = share.Key(ix.Path)
 	sys, games, err := ix.Games()
 	if err != nil || sys == nil {
 		sys, games = []share.System{}, nil
@@ -59,6 +64,120 @@ func (s *Server) saveInside(ix *share.Index, info map[string]any) {
 		writeList(p, bios)
 		s.bios.forget(folder)
 	}
+}
+
+// insideKept: the share's systems, packed-file count and game and BIOS lists were worked out
+// from this same index (a re-posted share has a new one) by this version of the code, and its
+// game list is still on disk (a reset clears them). Working them out takes seconds on a big
+// build, so opening it again uses them as they are.
+func (s *Server) insideKept(ix *share.Index, info map[string]any) bool {
+	if str(info["inside_of"]) != share.Key(ix.Path) || num(info["inside_v"], -1) != insideVersion || info["packed"] == nil {
+		return false
+	}
+	if sys, _ := info["inside"].([]any); len(sys) == 0 {
+		return true // no games: there's no list file to look for
+	}
+	folder, _ := ix.Info["folder_id"].(string)
+	if folder == "" {
+		folder, _ = info["folder_id"].(string)
+	}
+	p := s.gamesFile(folder)
+	if p == "" {
+		return false
+	}
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// shareKindSearch: one share's games (kind "games") or BIOS files ("bios") matching q, or all
+// of them when q is empty, under scope; from the build's own lists and with the matching of
+// the Search page, best first. no_list: the build has no such list (not a game build, or not
+// worked out yet).
+func (s *Server) shareKindSearch(ss *session, ix *share.Index, kind, q, scope string, limit int) map[string]any {
+	t0 := time.Now()
+	folder, _ := ix.Info["folder_id"].(string)
+	scope = strings.Trim(strings.ReplaceAll(scope, "\\", "/"), "/")
+	under := func(p string) bool {
+		p = strings.ReplaceAll(p, "\\", "/")
+		return scope == "" || p == scope || strings.HasPrefix(p, scope+"/")
+	}
+	toks := strings.Fields(share.TitleKey(q))
+	type hit struct {
+		path, system, label, name string
+		score                     int
+		known                     bool
+	}
+	var hits []hit
+	noList := true
+	if kind == "games" {
+		if set := s.games.load(folder, s.gamesFile(folder), readGames); set != nil {
+			noList = false
+			for i, g := range set.games {
+				p := g.Folder + "/" + g.Name
+				if !under(p) {
+					continue
+				}
+				sc, ok := 0, true
+				if len(toks) > 0 {
+					sc, ok = titleScore(toks, set.prep[i])
+				}
+				if ok {
+					hits = append(hits, hit{path: p, system: g.System, name: g.Title, score: sc})
+				}
+			}
+		}
+	} else if set := s.bios.load(folder, s.biosFile(folder), readBios); set != nil {
+		noList = false
+		for i, b := range set.list {
+			if !under(b.Path) {
+				continue
+			}
+			sc, ok := 0, true
+			if len(toks) > 0 {
+				sc, ok = biosScore(toks, set.strong[i], set.weak[i])
+			}
+			if ok {
+				hits = append(hits, hit{path: b.Path, system: b.System, label: b.Label, name: b.Name, score: sc, known: b.Known})
+			}
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		a, b := hits[i], hits[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		if a.known != b.known {
+			return a.known
+		}
+		if x, y := strings.ToLower(a.name), strings.ToLower(b.name); x != y {
+			return x < y
+		}
+		return a.path < b.path
+	})
+	total := len(hits)
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	roots, ls := s.localRoots(ss, ix), listings{}
+	files, folders := []map[string]any{}, []map[string]any{}
+	for _, h := range hits {
+		if fe, _ := ix.FileByPath(h.path); fe != nil {
+			fj := fileJSON(*fe)
+			if d := path.Dir(strings.ReplaceAll(fe.Path, "\\", "/")); d != "." {
+				fj["folder"] = d
+			}
+			fj["system"], fj["label"] = h.system, h.label
+			if st := fileState(ls, roots, fe.Path, fe.Size); st != "" {
+				fj["local"] = st
+			}
+			files = append(files, fj)
+		} else if d, _ := ix.Dir(h.path); d != nil { // a game kept in a folder of its own
+			folders = append(folders, map[string]any{"name": path.Base(d.Path), "path": d.Path, "size": d.Size, "count": d.Count,
+				"local": folderThere(ls, roots, d.Path), "system": h.system})
+		}
+	}
+	return map[string]any{"q": q, "path": scope, "kind": kind, "no_list": noList, "folders": folders, "files": files,
+		"folder_matches": 0, "file_matches": total, "ms": time.Since(t0).Milliseconds()}
 }
 
 // writeList keeps a list as zipped JSON at p (an empty one: no file).

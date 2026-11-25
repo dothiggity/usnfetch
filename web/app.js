@@ -1510,6 +1510,17 @@ async function renderShare(s, path) {
   let scopeAll = !path || path === loneTop.get(sid);   // at the share's start: search all of it
   const q = h("input", { class: "input", type: "search", placeholder: scopeAll ? "Search this share…" : `Search in ${leaf}…`, autocomplete: "off",
     oninput: () => schedule(), onkeydown: (ev) => { if (ev.key === "Escape" && q.value) { ev.stopPropagation(); q.value = ""; schedule(0); } } });
+  // what the search looks for: any file, or one kind (games and BIOS files from the build's own
+  // lists, as on the Search page; the rest by file type). With a kind, an empty box lists every
+  // one of them here.
+  const kindWord = { games: "games", bios: "BIOS files", video: "videos", picture: "pictures", music: "music", document: "documents", archive: "archives" };
+  const kindSel = h("select", { class: "input sm", "aria-label": "Search for", title: "What to search for", onchange: () => { q.placeholder = searchHint(); schedule(0); } },
+    [["", "All files"], ...((info.inside || []).length ? [["games", "Games"], ["bios", "BIOS"]] : []),
+      ["video", "Videos"], ["picture", "Pictures"], ["music", "Music"], ["document", "Documents"], ["archive", "Archives"]].map(([v, l]) => h("option", { value: v }, l)));
+  function searchHint() {
+    const w = kindWord[kindSel.value];
+    return w ? `Search ${w} in ${scopeAll ? "this share" : leaf}…` : scopeAll ? "Search this share…" : `Search in ${leaf}…`;
+  }
   const tbody = h("tbody");
   const head = h("input", { type: "checkbox", title: "Select everything listed" });
   const galAll = h("input", { type: "checkbox" });
@@ -1520,7 +1531,7 @@ async function renderShare(s, path) {
   const grid = h("div", { class: "gallery hidden" });
   $("#view").replaceChildren(summary, h("div", { class: "browsebar" }, crumbs, viewSw, galAllLbl,
     sortSel, h("label", { class: "check", title: "Hide files that are already in your download folder" }, hideBox, "Hide what I have"),
-    h("div", { class: "search" }, icon("search"), q)), listing, grid, foot, dock);
+    h("div", { class: "search" }, icon("search"), q), kindSel), listing, grid, foot, dock);
 
   // ---- the share in one line; the rest under Details
   let detailsOpen = store.get("sharedetails", false);
@@ -1712,10 +1723,12 @@ async function renderShare(s, path) {
     return h("tr", { class: "folder-row", onclick: () => goFolder(d.path) },
       h("td", { class: "cb" }, selBox(d.path, { folder: true, size: d.size, count: d.count }, note)),
       h("td", {}, h("div", { class: "name-cell folder" }, icon("folder"), h("div", { class: "nmwrap" },
-        h("a", { class: "nm", href: "#", onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); goFolder(d.path); } }, d.name), sub))),
+        h("a", { class: "nm", href: "#", onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); goFolder(d.path); } }, d.name), kindChip(d), sub))),
       h("td", { class: "right nowrap" }, fmtBytes(d.size)), h("td", { class: "muted nowrap" }, `${d.count.toLocaleString()} file${d.count === 1 ? "" : "s"}`,
         d.local ? [" ", h("span", { class: "chip ok plain", title: "This folder is in your download folder" }, "on disk")] : null, " ", note), h("td", { class: "act" }));
   }
+  // in a Games or BIOS search: the game's console, or what the BIOS file is
+  const kindChip = (x) => x.system || x.label ? h("span", { class: "chip plain kindchip" }, [x.label, x.system].filter(Boolean).join(" · ")) : null;
   function localChip(f) {
     if (f.local === "ok") return h("span", { class: "chip ok", title: "Already in your download folder" }, icon("check"), "on disk");
     if (f.local === "partial") return h("span", { class: "chip warn", title: "A download of this file is under way or was stopped part-way" }, "partial");
@@ -1727,7 +1740,7 @@ async function renderShare(s, path) {
     return h("tr", {},
       h("td", { class: "cb" }, selBox(f.path, { size: f.size })),
       h("td", {}, h("div", { class: "name-cell" }, icon("file"), h("div", { class: "nmwrap" },
-        previewable(f) ? h("a", { class: "nm", href: "#", onclick: (ev) => { ev.preventDefault(); preview(f); } }, f.name) : h("span", { class: "nm" }, f.name), sub))),
+        previewable(f) ? h("a", { class: "nm", href: "#", onclick: (ev) => { ev.preventDefault(); preview(f); } }, f.name) : h("span", { class: "nm" }, f.name), kindChip(f), sub))),
       h("td", { class: "right nowrap", title: storage(f) }, fmtBytes(f.size)),
       h("td", { class: "nowrap" }, localChip(f) || (f.size === 0 ? h("span", { class: "chip" }, "empty") : null)),
       h("td", { class: "act" },
@@ -1857,27 +1870,34 @@ async function renderShare(s, path) {
   function schedule(ms = 250) { clearTimeout(timer); timer = setTimeout(runSearch, ms); }
   page.stop.push(() => { clearTimeout(timer); if (ctl) ctl.abort(); });
   async function runSearch() {
-    const text = q.value.trim();
+    const text = q.value.trim(), kind = kindSel.value;
     if (ctl) ctl.abort();
-    if (text.length < 2) { if (mode !== "list") { mode = "list"; load(); } return; }
+    if (!kind && text.length < 2) { if (mode !== "list") { mode = "list"; load(); } return; }
+    if (kind && text.length === 1) return;   // a kind: nothing typed lists them all, one letter waits for more
     mode = "search";
     galAllLbl.classList.add("hidden");
     ctl = new AbortController();
     const scope = scopeAll ? "" : path;
     put(foot, h("span", {}, h("span", { class: "spin" }), " searching…"));
     let r;
-    try { r = await api(`/shares/${sid}/search?q=${encodeURIComponent(text)}&path=${encodeURIComponent(scope)}&limit=300&sort=${ssort}`, { signal: ctl.signal }); }
+    try { r = await api(`/shares/${sid}/search?q=${encodeURIComponent(text)}&path=${encodeURIComponent(scope)}&limit=300&sort=${ssort}&kind=${kind}`, { signal: ctl.signal }); }
     catch (e) { if (e.name === "AbortError") return; if (e.code === "not_open") { route(); return; } fail(e); return; }
-    if (!r || mode !== "search" || q.value.trim() !== text) return;
+    if (!r || mode !== "search" || q.value.trim() !== text || kindSel.value !== kind) return;
     boxes = [];
     listing.classList.remove("hidden"); grid.classList.add("hidden");
+    const where = scope ? " in " + leaf : "";
     const rows = [...r.folders.map((d) => folderRow(d, true)), ...r.files.filter((f) => !(hideHave && f.local === "ok")).map((f) => fileRow(f, true))];
-    if (!rows.length) rows.push(h("tr", {}, h("td", { colspan: 5 }, emptyState(null, null, `Nothing matches “${text}”${scope ? " in " + leaf : ""}.`))));
+    if (!rows.length) rows.push(h("tr", {}, h("td", { colspan: 5 }, emptyState(null, null,
+      r.no_list ? `usnfetch hasn't found any ${kindWord[kind]} in this build.`
+        : text ? `Nothing matches “${text}”${where}.` : `No ${kindWord[kind]}${where}.`))));
     tbody.replaceChildren(...rows);
     const n = (x, w) => `${x.toLocaleString()} ${w}${x === 1 ? "" : "s"}`;
-    put(foot, h("span", {}, `${n(r.file_matches, "file")} and ${n(r.folder_matches, "folder")} match${scope ? " in " + leaf : ""}`),
-      r.files.length < r.file_matches || r.folders.length < r.folder_matches ? h("span", { class: "muted" }, ssort === "name" ? "showing the first ones by path: add words to narrow it down" : "showing the largest / smallest of the matches") : null,
-      scope ? h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); scopeAll = true; q.placeholder = "Search this share…"; runSearch(); } }, "search the whole share") : null,
+    const ranked = kind === "games" || kind === "bios", shown = r.files.length + r.folders.length;
+    put(foot, h("span", {}, kind ? `${n(r.file_matches, kind === "games" ? "game" : kind === "bios" ? "BIOS file" : "file")}${text ? " match" : ""}${where}`
+      : `${n(r.file_matches, "file")} and ${n(r.folder_matches, "folder")} match${where}`),
+      ranked ? (shown < r.file_matches ? h("span", { class: "muted" }, `showing the best ${shown.toLocaleString()}`) : null)
+        : r.files.length < r.file_matches || r.folders.length < r.folder_matches ? h("span", { class: "muted" }, ssort === "name" ? "showing the first ones by path: add words to narrow it down" : "showing the largest / smallest of the matches") : null,
+      scope ? h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); scopeAll = true; q.placeholder = searchHint(); runSearch(); } }, "search the whole share") : null,
       h("span", { class: "faint" }, `${r.ms} ms`));
     refreshSel();
   }

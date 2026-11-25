@@ -161,11 +161,13 @@ func (ix *Index) scan(ctx context.Context, dc *dirCache, where string, args []an
 	return chunks, err
 }
 
+var likeEscape = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 // likeArg: a LIKE pattern matching s anywhere (with ESCAPE '\').
-func likeArg(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return "%" + r.Replace(s) + "%"
-}
+func likeArg(s string) string { return "%" + likeEscape.Replace(s) + "%" }
+
+// endsArg: a LIKE pattern matching names that end in s (with ESCAPE '\').
+func endsArg(s string) string { return "%" + likeEscape.Replace(s) }
 
 // SearchHit is a matching file with its folder path.
 type SearchHit struct {
@@ -181,15 +183,38 @@ type SearchResult struct {
 	FileMatches   int64
 }
 
+// FileKinds: the kinds of file a share's search can be narrowed to, by name ending.
+var FileKinds = map[string][]string{
+	"video":    {".mp4", ".mkv", ".avi", ".webm", ".mov", ".m4v", ".wmv", ".mpg", ".mpeg", ".ts", ".flv"},
+	"picture":  {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic"},
+	"music":    {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".wav", ".wma"},
+	"document": {".pdf", ".txt", ".nfo", ".md", ".doc", ".docx", ".rtf", ".epub", ".cbz", ".cbr", ".html", ".htm"},
+	"archive":  {".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".xz", ".zst", ".bz2", ".001"},
+}
+
 // Search finds folders and files under scope ("" = the whole share) whose path
 // contains every word of query (case-insensitive), at least one of them in the name
 // itself: "snes mario" finds files named *mario* in folders named *snes*, not every
 // file of an SNES folder. Results are sorted by path; the totals count every match.
 func (ix *Index) Search(ctx context.Context, query, scope string, limit int, sortBy string) (*SearchResult, error) {
+	return ix.SearchKind(ctx, query, scope, limit, sortBy, nil)
+}
+
+// SearchKind is Search for files whose names end in one of exts (FileKinds), when given:
+// files only, and with no words, every such file under scope.
+func (ix *Index) SearchKind(ctx context.Context, query, scope string, limit int, sortBy string, exts []string) (*SearchResult, error) {
 	words := strings.Fields(strings.ToLower(query))
 	res := &SearchResult{Folders: []Folder{}, Files: []SearchHit{}}
-	if len(words) == 0 {
+	if len(words) == 0 && len(exts) == 0 {
 		return res, nil
+	}
+	hasExt := func(ln string) bool {
+		for _, e := range exts {
+			if strings.HasSuffix(ln, e) {
+				return true
+			}
+		}
+		return len(exts) == 0
 	}
 	dc, err := ix.dirs()
 	if err != nil {
@@ -212,9 +237,10 @@ func (ix *Index) Search(ctx context.Context, query, scope string, limit int, sor
 		}
 		return false
 	}
-	// folders: a word in the folder's own name, every word somewhere in its path
+	// folders: a word in the folder's own name, every word somewhere in its path (none when
+	// it's a kind of file that's asked for)
 	var fdids []int
-	for did := 1; did < len(dc.paths); did++ {
+	for did := 1; did < len(dc.paths) && len(exts) == 0; did++ {
 		if !inScope[did] || dc.paths[did] == normDir(scope) || !nameHit(dc.names[did]) {
 			continue
 		}
@@ -257,12 +283,24 @@ func (ix *Index) Search(ctx context.Context, query, scope string, limit int, sor
 		}
 	}
 
-	// files: SQL keeps names holding any word (ASCII case-insensitive); the rest is checked here
-	var conds []string
+	// files: SQL keeps names holding any word (ASCII case-insensitive) and ending in one of
+	// exts; the rest is checked here
+	var conds, econds []string
 	var args []any
+	for _, e := range exts {
+		econds = append(econds, `df.name LIKE ? ESCAPE '\'`)
+		args = append(args, endsArg(e))
+	}
 	for _, w := range words {
 		conds = append(conds, `df.name LIKE ? ESCAPE '\'`)
 		args = append(args, likeArg(w))
+	}
+	where := strings.Join(conds, " OR ")
+	if len(econds) > 0 {
+		where = "(" + strings.Join(econds, " OR ") + ")"
+		if len(conds) > 0 {
+			where += " AND (" + strings.Join(conds, " OR ") + ")"
+		}
 	}
 	keep := max(limit, 1)
 	var mu sync.Mutex
@@ -281,12 +319,12 @@ func (ix *Index) Search(ctx context.Context, query, scope string, limit int, sor
 	case SortSizeAsc:
 		less = func(a, b hit) bool { return a.size < b.size || (a.size == b.size && a.key < b.key) }
 	}
-	_, err = ix.scan(ctx, dc, strings.Join(conds, " OR "), args, bySize, func(_ int, r scanRow) bool {
+	_, err = ix.scan(ctx, dc, where, args, bySize, func(_ int, r scanRow) bool {
 		if r.DID < 0 || int(r.DID) >= len(inScope) || !inScope[r.DID] {
 			return true
 		}
 		ln := strings.ToLower(r.Name)
-		if !nameHit(ln) {
+		if !hasExt(ln) || (len(words) > 0 && !nameHit(ln)) {
 			return true
 		}
 		for i, w := range words {

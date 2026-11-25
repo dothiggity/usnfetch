@@ -162,7 +162,7 @@ func (s *Server) insideOf(link string) bool {
 	if info = s.M.Store.ShareInfo(link); info == nil { // downloaded, never browsed
 		info = map[string]any{}
 		if sum, err := ix.Summary(); err == nil && sum.Name != "" {
-			info["name"], info["size"], info["files"], info["packed"] = sum.Name, sum.Size, sum.Files, sum.Packed
+			info["name"], info["size"], info["files"] = sum.Name, sum.Size, sum.Files
 		}
 	}
 	info["folder_id"] = l.FolderID

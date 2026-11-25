@@ -1010,13 +1010,14 @@ type TreeSummary struct {
 	Name   string `json:"name"`
 }
 
+// Summary: the share's size, file count and name, from its folder tree (quick). Packed is
+// left at 0: PackedFiles counts it, which takes a scan of every file.
 func (ix *Index) Summary() (TreeSummary, error) {
 	var s TreeSummary
 	var rootFiles int64
 	if err := ix.rw.QueryRow("SELECT size, count, nfiles FROM dirs WHERE did = 0").Scan(&s.Size, &s.Files, &rootFiles); err != nil {
 		return s, err
 	}
-	_ = ix.rw.QueryRow("SELECT COUNT(*) FROM files WHERE pid IS NOT NULL").Scan(&s.Packed)
 	var tops []string
 	rows, err := ix.rw.Query("SELECT name FROM dirs WHERE parent = 0 LIMIT 2")
 	if err == nil {
@@ -1033,6 +1034,21 @@ func (ix *Index) Summary() (TreeSummary, error) {
 		_ = ix.rw.QueryRow("SELECT name FROM dir_files WHERE did = 0 LIMIT 1").Scan(&s.Name)
 	}
 	return s, nil
+}
+
+// PackedFiles: how many files are packed several to an article. It reads every file's row
+// (most of a second on a share of millions), so callers keep the answer.
+func (ix *Index) PackedFiles() int64 {
+	var n int64
+	_ = ix.rw.QueryRow("SELECT COUNT(*) FROM files WHERE pid IS NOT NULL").Scan(&n)
+	return n
+}
+
+// Key: what names this index whatever form it's in (full index or file list): the share's
+// folder and its manifest.
+func Key(path string) string {
+	b := filepath.Base(path)
+	return strings.TrimSuffix(strings.TrimSuffix(b, ".usnindex"), ".usnlist")
 }
 
 // DirInfo of a folder path ("" = root), nil if there is no such folder.

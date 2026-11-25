@@ -444,8 +444,8 @@ func (s *Server) loadShare(ss *session, password string) {
 	if info == nil {
 		info = map[string]any{}
 	}
-	info["name"], info["size"], info["files"], info["packed"], info["opened_at"] = name, sum.Size, sum.Files, sum.Packed, float64(time.Now().UnixNano())/1e9
-	s.saveInside(ix, info) // its systems and games (games.go)
+	info["name"], info["size"], info["files"], info["opened_at"] = name, sum.Size, sum.Files, float64(time.Now().UnixNano())/1e9
+	s.saveInside(ix, info) // its systems, games and packed-file count (games.go), once per index
 	for _, k := range []string{"format", "version", "access", "created_at", "signature", "owner_fingerprint"} {
 		info[k] = ix.Info[k]
 	}
@@ -1398,7 +1398,18 @@ func (s *Server) shareSearch(w http.ResponseWriter, r *http.Request) (any, error
 	}
 	q := r.URL.Query()
 	t0 := time.Now()
-	res, err := ix.Search(r.Context(), q.Get("q"), q.Get("path"), min(2000, max(1, num(q.Get("limit"), 300))), q.Get("sort"))
+	limit := min(2000, max(1, num(q.Get("limit"), 300)))
+	kind := q.Get("kind") // "" any file; games / bios (games.go); or one of share.FileKinds
+	if kind == "games" || kind == "bios" {
+		return s.shareKindSearch(ss, ix, kind, q.Get("q"), q.Get("path"), limit), nil
+	}
+	var exts []string
+	if kind != "" {
+		if exts = share.FileKinds[kind]; exts == nil {
+			return nil, fail(400, "kind must be games, bios, video, picture, music, document or archive", "bad_kind")
+		}
+	}
+	res, err := ix.SearchKind(r.Context(), q.Get("q"), q.Get("path"), limit, q.Get("sort"), exts)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return nil, nil // the browser gave up on it (a newer search replaced it)
@@ -1419,7 +1430,7 @@ func (s *Server) shareSearch(w http.ResponseWriter, r *http.Request) (any, error
 	for _, f := range res.Folders {
 		folders = append(folders, map[string]any{"name": f.Name, "path": f.Path, "size": f.Size, "count": f.Count, "local": folderThere(ls, roots, f.Path)})
 	}
-	return map[string]any{"q": q.Get("q"), "path": q.Get("path"), "folders": folders, "files": files,
+	return map[string]any{"q": q.Get("q"), "path": q.Get("path"), "kind": kind, "folders": folders, "files": files,
 		"folder_matches": res.FolderMatches, "file_matches": res.FileMatches, "ms": time.Since(t0).Milliseconds()}, nil
 }
 
