@@ -12,7 +12,9 @@ as they arrive, and checks every file against the share's SHA-256.
 It's an independent project, not affiliated with any other app, and it doesn't come with any
 shares. You bring your own links, and what you download is up to you.
 
-![The catalog: each build with its launcher and device, what's inside it, its size, and whether it's still on your provider](docs/screenshot.png)
+![The catalog: each build with its launcher and device, what's inside it, its size, and whether it's still on your provider](docs/catalog.png)
+
+*The builds, consoles and games in these screenshots are all made up.*
 
 ## What it does
 
@@ -31,6 +33,25 @@ shares. You bring your own links, and what you download is up to you.
 - **A proper queue:** reorder, pause, speed limits, a weekly schedule. It pauses before the disk
   fills up, and on Windows the tray icon tells you when a download finishes.
 - **Several providers** with priorities, like SABnzbd, all sharing your plan's connection limit.
+
+## A look around
+
+A build's games as a box-art gallery, streamed from Usenet. Tick what you want, or whole systems.
+
+![A build's folder of games as a gallery of box art, with three games ticked and the selection bar below](docs/gallery.png)
+
+The review before it downloads: here two systems go into the RetroBat in the living room, one copy
+of each game, with their pictures and game-list entries.
+
+![The download review: one copy per game, saved to a RetroBat library, with each system's folder on the device](docs/library.png)
+
+Search looks through every build you've opened, and marks the games a library already has.
+
+![A game search: each game with its console, the builds that have it, a Download button, and a mark for games already in a library](docs/search.png)
+
+The queue, with what's left, the speed and when it should be done.
+
+![Activity: a download in progress under a speed limit, with its ETA, and a finished one in History](docs/activity.png)
 
 ## Getting started
 
