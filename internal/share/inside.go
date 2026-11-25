@@ -259,6 +259,12 @@ func gameKey(name string, dir bool) string {
 	return TitleKey(GameTitle(name))
 }
 
+// IsGame: a file (or folder) of a system folder that's a game, not artwork, a game list or notes.
+func IsGame(name string, dir bool) bool { return gameKey(name, dir) != "" }
+
+// MediaFolder: a subfolder of a system folder that holds artwork and the like, not games.
+func MediaFolder(name string) bool { return mediaDir[strings.ToLower(name)] }
+
 // GameFile is one file, or game folder, of a game.
 type GameFile struct {
 	FID    int64  `json:"fid,omitempty"` // a file's, to stream it (Index.File)
@@ -355,8 +361,9 @@ func (ix *Index) Games() ([]System, []Game, error) {
 			}
 		}
 		r.Close()
-		// mostly systems (a folder of games whose titles happen to name a console is not)
-		if score >= 2 && score*10 >= subs*3 && c.files > most {
+		// mostly systems (a folder of games whose titles happen to name a console is not); a
+		// roms folder holding just one folder, named like a system, is a one-system build's
+		if (score >= 2 && score*10 >= subs*3 || score == 1 && subs == 1) && c.files > most {
 			root, most = c.did, c.files
 		}
 	}

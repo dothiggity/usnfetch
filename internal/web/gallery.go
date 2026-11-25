@@ -241,26 +241,11 @@ func (s *Server) loadLaunchBoxTitles(a *artIndex, ix *share.Index, xmlPath strin
 	if !ix.HasPool {
 		return nil // only the file list is saved: titles come from the ROM names until the rest is fetched
 	}
-	fe, err := ix.FileByPath(xmlPath)
-	if err != nil || fe == nil || !fe.Downloadable() {
-		return nil // no game list: titles come from the ROM names
+	data, err := s.readShareFile(ix, xmlPath, 200<<20)
+	if err != nil || data == nil {
+		return err // nil, nil: no game list, titles come from the ROM names
 	}
-	if fe.Size > 200<<20 {
-		return fmt.Errorf("%s is too large to read (%d MB)", xmlPath, fe.Size>>20)
-	}
-	pool, sem, err := s.streamResources()
-	if err != nil {
-		return err
-	}
-	rd, err := engine.NewFileReader(ix, *fe, pool, s.cache, sem)
-	if err != nil {
-		return err
-	}
-	var buf bytes.Buffer
-	if err := rd.WriteRange(&buf, 0, fe.Size); err != nil {
-		return fmt.Errorf("reading %s: %w", xmlPath, err)
-	}
-	dec := xml.NewDecoder(&buf)
+	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = false
 	type game struct {
 		Title           string `xml:"Title"`
@@ -388,4 +373,29 @@ func (s *Server) shareGallery(w http.ResponseWriter, r *http.Request) (any, erro
 	}
 	return map[string]any{"kind": g.Kind, "platform": g.Platform, "items": items, "folders": fl, "matched": matched,
 		"total": d.NFiles, "offset": offset, "next": offset + len(files), "truncated": int64(offset+len(files)) < d.NFiles}, nil
+}
+
+// readShareFile: a (small) file of a share, streamed from Usenet into memory; nil when the
+// share has no such file. The share's full index has to be open (ix.HasPool).
+func (s *Server) readShareFile(ix *share.Index, p string, maxBytes int64) ([]byte, error) {
+	fe, err := ix.FileByPath(p)
+	if err != nil || fe == nil || !fe.Downloadable() {
+		return nil, err
+	}
+	if fe.Size > maxBytes {
+		return nil, fmt.Errorf("%s is too large to read (%d MB)", p, fe.Size>>20)
+	}
+	pool, sem, err := s.streamResources()
+	if err != nil {
+		return nil, err
+	}
+	rd, err := engine.NewFileReader(ix, *fe, pool, s.cache, sem)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := rd.WriteRange(&buf, 0, fe.Size); err != nil {
+		return nil, fmt.Errorf("reading %s: %w", p, err)
+	}
+	return buf.Bytes(), nil
 }

@@ -23,6 +23,9 @@ shares. You bring your own links, and what you download is up to you.
   space, where it lands, what's already on disk and which archives it'll unpack.
 - **Search every build you've opened or downloaded** for a game ("mario 3", "smb3", "ff7") or a
   BIOS ("ps1 bios usa"), and download it from the result.
+- **Straight into your library.** Add the RetroBat, Batocera, ES-DE / EmuDeck or LaunchBox you
+  play on, and a game goes into its folder for that system with its pictures, video and manual,
+  then EmulationStation reloads. One copy per game keeps just the best region of each.
 - **Keep a catalog** of your links, filtered by launcher and device (Batocera, RetroBat, Steam
   Deck, Raspberry Pi…), with what's inside each build and whether it's still on your provider.
 - **A proper queue:** reorder, pause, speed limits, a weekly schedule. It pauses before the disk
@@ -58,6 +61,24 @@ usnfetch, a game that's one file of up to 1 GB, and any BIOS file, goes to your 
 downloads; from another computer it goes to usnfetch's download folder. A link under the button
 does it the other way. Bigger games, and games of several discs, go through the queue. Search
 only knows builds you've opened or downloaded, and offers to look inside the rest.
+
+**Libraries.** Settings → Libraries holds the devices you play on; the download review's Save to
+then offers each. A game goes into the device's own folder for its system, whatever the build calls
+it, and BIOS files into its BIOS folder. What goes with it depends on the front-end:
+
+- **RetroBat and Batocera:** its pictures, video and manual, named the way their scraper names
+  them, and its entry in that system's `gamelist.xml` (from the build's own list). The rest of the
+  list stays as it was, and the old one is kept beside it. Then usnfetch asks EmulationStation to
+  reload (port 1234). From another computer Batocera only answers with System settings → Frontend
+  developer options → Enable public web API access on.
+- **ES-DE and EmuDeck:** its pictures, video and manual in ES-DE's `downloaded_media`. Its game
+  lists aren't touched, since ES-DE mustn't have them changed while it runs.
+- **LaunchBox:** the game into `Games\<Platform>` and its pictures named for LaunchBox. LaunchBox
+  adds it itself (Automated ROM Imports, or Tools → Scan → For Added ROMs).
+
+Search marks the games a library has already, in any region, and the review skips files that are
+already there. **One copy per game**, in the review, keeps each game's best release by Settings →
+Downloads → Preferred regions, with all its discs.
 
 **More than one provider.** Priority 0 is the highest, and providers that share the top priority
 download together. A lower one (a bigger number) is only asked for what the others are missing,

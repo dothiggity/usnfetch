@@ -743,6 +743,7 @@ func (s *Server) routes() {
 	s.gameRoutes()
 	s.biosRoutes()
 	s.resetRoutes()
+	s.libraryRoutes()
 
 	// shares
 	s.api("POST /api/shares/open", func(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -1292,6 +1293,28 @@ func (s *Server) sharePlan(w http.ResponseWriter, r *http.Request) (any, error) 
 		return nil, err
 	}
 	st := s.M.Settings
+	// one copy per game: offered when the selection takes whole system folders (oneper.go)
+	sysIn, _ := systemsIn(ix, sel)
+	var one any
+	if b["one_per_game"] == true && len(sysIn) > 0 {
+		n, games, left, err := s.onePerGame(ix, sel)
+		if err != nil {
+			return nil, err
+		}
+		sel, one = n, map[string]any{"games": games, "left_out": left}
+	}
+	var install any
+	if id := str(b["library"]); id != "" {
+		lib, ok := st.LibraryByID(id)
+		if !ok {
+			return nil, fail(404, "no such library", "no_library")
+		}
+		p, err := s.planInstall(r.Context(), ix, sel, lib)
+		if err != nil {
+			return nil, err
+		}
+		install = p.view(lib)
+	}
 	name, nameAuto, top := s.destination(ss, ix, strings.TrimSpace(str(b["name"])))
 	outDir := app.JobOutDir(st, name)
 	var example string
@@ -1363,7 +1386,8 @@ func (s *Server) sharePlan(w http.ResponseWriter, r *http.Request) (any, error) 
 	return map[string]any{"files": sel.count, "size": sel.size, "free": free, "complete_dir": st.CompleteDir, "sep": string(os.PathSeparator),
 		"name": name, "name_auto": nameAuto, "out_dir": outDir, "example": example, "top": top,
 		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives, "min_free_gb": st.MinFreeGB, "archives": arc, "single_examples": singles,
-		"active_jobs": active}, nil
+		"active_jobs": active, "install": install, "libraries": libraryList(st),
+		"one_can": len(sysIn) > 0, "one": one, "regions": st.Regions}, nil
 }
 
 // shareSearch: folders and files of an open share matching words, under a folder.
@@ -1420,8 +1444,39 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) (any, err
 	if l := strings.TrimSpace(str(b["label"])); l != "" && sel.sel != nil { // what was picked, in words ("Final Fantasy VII (PlayStation)")
 		picked = string([]rune(l)[:min(120, len([]rune(l)))])
 	}
-	j, err := s.M.AddJob(ss.Link, app.AddOptions{Name: s.jobNameFor(ss, strings.TrimSpace(str(b["name"]))),
-		FileSel: sel.sel, ExtractMode: mode, Existing: str(b["existing"]), Picked: picked, Size: sel.size})
+	if b["one_per_game"] == true { // one copy per game (oneper.go)
+		if sysIn, _ := systemsIn(ix, sel); len(sysIn) > 0 {
+			n, _, _, err := s.onePerGame(ix, sel)
+			if err != nil {
+				return nil, err
+			}
+			sel = n
+			picked = strings.TrimPrefix(picked+" · one per game", " · ")
+		}
+	}
+	o := app.AddOptions{Name: s.jobNameFor(ss, strings.TrimSpace(str(b["name"]))),
+		FileSel: sel.sel, ExtractMode: mode, Existing: str(b["existing"]), Picked: picked, Size: sel.size}
+	if id := str(b["library"]); id != "" { // into a library: each file where it goes on the device (library.go)
+		lib, ok := s.M.Settings.LibraryByID(id)
+		if !ok {
+			return nil, fail(404, "no such library", "no_library")
+		}
+		p, err := s.planInstall(r.Context(), ix, sel, lib)
+		if err != nil {
+			return nil, err
+		}
+		if p.Files == 0 {
+			return nil, fail(400, "none of this has a place in "+lib.Name+": only games in a system folder and BIOS files go into a library", "nothing_fits")
+		}
+		if p.Files >= maxInstall {
+			return nil, fail(400, "that's too much to put into a library in one go: pick systems or games", "too_many")
+		}
+		o.Library, o.Dest, o.Meta, o.Size = lib.ID, p.Dest, p.Meta, p.Size
+		if o.Picked == "" {
+			o.Picked = "into " + lib.Name
+		}
+	}
+	j, err := s.M.AddJob(ss.Link, o)
 	if err != nil {
 		return nil, err
 	}
@@ -1546,6 +1601,24 @@ func (s *Server) settingsView() map[string]any {
 func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error) {
 	b := body(r)
 	st := s.M.Settings
+	var libs []app.Library
+	if v, ok := b["libraries"]; ok {
+		var err error
+		if libs, err = libraries(v); err != nil {
+			return nil, err
+		}
+	}
+	var regions []string
+	if v, ok := b["regions"]; ok {
+		for _, x := range strList(v) {
+			if x = strings.TrimSpace(x); x != "" && len(regions) < 12 {
+				regions = append(regions, x)
+			}
+		}
+		if len(regions) == 0 {
+			regions = append([]string{}, app.DefaultRegions...)
+		}
+	}
 	// a new download or index folder has to be one that can be made and written to (setup.go)
 	for _, k := range []string{"complete_dir", "index_dir"} {
 		cur := st.CompleteDir
@@ -1631,6 +1704,12 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 		st.Schedule = rules
 	}
 	getBool("delete_archives", &st.DeleteArchives)
+	if libs != nil {
+		st.Libraries = libs
+	}
+	if regions != nil {
+		st.Regions = regions
+	}
 	if v, ok := b["accounts"]; ok {
 		var in []map[string]any
 		if l, ok := v.([]any); ok {

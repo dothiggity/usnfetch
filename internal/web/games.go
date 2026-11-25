@@ -299,6 +299,7 @@ type gameHit struct {
 	Title  string      `json:"title"`
 	System string      `json:"system"`
 	Builds []gameBuild `json:"builds"`
+	Have   []string    `json:"have,omitempty"` // the libraries that have it already (library.go: markHave)
 	score  int         // titleScore, then rankGames' adjustments
 	key    string      // the title's words (TitleKey)
 	words  int
@@ -487,6 +488,7 @@ func (s *Server) gameRoutes() {
 		if len(out) > limit {
 			out = out[:limit]
 		}
+		s.markHave(out)
 		return map[string]any{"query": q, "games": out, "total": total, "builds": builds, "ms": time.Since(t0).Milliseconds()}, nil
 	})
 }

@@ -36,7 +36,12 @@ type Settings struct {
 	Paused            bool             `json:"paused"`        // paused by hand
 	PausedUntil       float64          `json:"paused_until"`  // unix time a timed pause ends, 0 = until resumed
 	ScheduleSkip      float64          `json:"schedule_skip"` // scheduled pauses are skipped until then (resumed by hand)
+	Libraries         []Library        `json:"libraries"`     // the devices' game collections a download can go into (library.go)
+	Regions           []string         `json:"regions"`       // one copy per game: the regions to prefer, best first (oneper.go)
 }
+
+// DefaultRegions: the regions one copy per game prefers unless told otherwise.
+var DefaultRegions = []string{"USA", "World", "Europe", "Japan"}
 
 // NNTPSettings: the single account older versions kept (read once, then moved into Accounts).
 type NNTPSettings struct {
@@ -80,6 +85,8 @@ func defaultSettings() Settings {
 		Extract:           true,
 		DeleteArchives:    true,
 		Accounts:          []AccountSetting{},
+		Libraries:         []Library{},
+		Regions:           append([]string{}, DefaultRegions...),
 		StreamConnections: 8,
 		IndexCacheGB:      20,
 		MinFreeGB:         5,
@@ -159,6 +166,12 @@ func LoadSettings(path string) (*Settings, error) {
 	}
 	if s.Schedule == nil {
 		s.Schedule = []ScheduleRule{}
+	}
+	if s.Libraries == nil {
+		s.Libraries = []Library{}
+	}
+	if len(s.Regions) == 0 {
+		s.Regions = append([]string{}, DefaultRegions...)
 	}
 	if s.Web.Port == 0 {
 		s.Web.Port = 7979

@@ -1042,9 +1042,10 @@ async function pageSearch() {
     // one action at a time: a second click (or the other way) while one runs does nothing
     const one = (el, fn) => { if (!box.classList.contains("busy")) { box.classList.add("busy"); busy(el, fn).finally(() => box.classList.remove("busy")); } };
     const main = h("button", { class: "btn sm primary", onclick: () => one(main, toBrowser ? o.browser : o.queue) }, icon("download"), "Download");
+    const there = libCount ? "a library or the download folder" : "the download folder";   // the review picks which
     const other = o.browser ? h("a", { class: "small", href: "#", onclick: (ev) => { ev.preventDefault(); one(other, toBrowser ? o.queue : o.browser); } },
-      toBrowser ? "or to the download folder" : "or save on this device") : null;
-    const box = h("div", { class: "gm-act" }, main, h("div", { class: "faint small nowrap" }, (toBrowser ? "in your browser" : "to the download folder") + " · " + o.what), other);
+      toBrowser ? "or to " + there : "or save on this device") : null;
+    const box = h("div", { class: "gm-act" }, main, h("div", { class: "faint small nowrap" }, (toBrowser ? "in your browser" : "to " + there) + " · " + o.what), other);
     return box;
   }
   // which build it comes from (the one whose index is at hand first), and a way to open it there
@@ -1062,7 +1063,8 @@ async function pageSearch() {
     const show = () => put(act, actions({ browser: small(b) ? () => getGame(g, b) : null, queue: () => queueGame(g, b), what: what(b.count || 1, b.size) }));
     show();
     return h("div", { class: "gm-row" },
-      h("div", { class: "gm-main" }, h("div", { class: "gm-t" }, h("span", { class: "gm-name" }, g.title), h("span", { class: "chip plain" }, g.system)),
+      h("div", { class: "gm-main" }, h("div", { class: "gm-t" }, h("span", { class: "gm-name" }, g.title), h("span", { class: "chip plain" }, g.system),
+        (g.have || []).map((l) => h("span", { class: "chip ok", title: `${l} has it already (a file of this name in its ${g.system} folder)` }, icon("check"), "in " + l))),
         fromLine(g.builds, () => b, (x) => { b = x; show(); }, (x) => x.folder)),
       act);
   };
@@ -1098,7 +1100,8 @@ async function pageSearch() {
 
   // ---- builds Search doesn't know yet: it knows the games of the builds you've opened or
   // downloaded, so it says how many it hasn't seen and offers to look inside them
-  let cat = null, looking = false;
+  let cat = null, looking = false, libCount = 0;
+  api("/settings").then((st) => { libCount = (st.libraries || []).length; if (libCount) run(); }).catch(() => {});
   const cover = h("div");
   const loadCat = async () => { try { cat = (await api("/catalog")).entries; } catch { cat = []; } };
   function coverage() {
@@ -1282,7 +1285,7 @@ async function reviewDownload(s, sel, done, more = {}) {
     const nothing = allThere && existing === "skip";
     nothingNote.classList.toggle("hidden", !nothing);
     showSpace();
-    if (queueBtn) { queueBtn.disabled = nothing; queueBtn.textContent = nothing ? "Nothing to download" : over && !plan.min_free_gb ? "Queue anyway" : "Queue download"; }
+    if (queueBtn && !lib) { queueBtn.disabled = nothing; queueBtn.textContent = nothing ? "Nothing to download" : over && !plan.min_free_gb ? "Queue anyway" : "Queue download"; }
   }
   for (const r of haveChoices.querySelectorAll("input")) r.addEventListener("change", showQueue);
   async function countHave() {
@@ -1322,24 +1325,84 @@ async function reviewDownload(s, sel, done, more = {}) {
     h("div", { class: "pl" }, picked.slice(0, 500).map(([p, m]) => h("div", { class: "pr" }, icon(m.folder ? "folder" : "file"), h("span", { class: "pp", title: p }, p || "All files"),
       h("span", { class: "faint" }, m.folder ? `${(m.count || 0).toLocaleString()} files · ${fmtBytes(m.size)}` : fmtBytes(m.size)))),
     picked.length > 500 ? h("div", { class: "faint small" }, `and ${picked.length - 500} more`) : null)) : null;
-  modal({ title: more.title || "Download from " + shareTitle(s), body: [
-    more.title ? h("div", { class: "muted" }, "From ", h("b", {}, shareTitle(s))) : null,
-    h("div", { class: "facts" },
-      h("div", {}, h("div", { class: "k" }, "Files"), h("div", { class: "v" }, plan.files.toLocaleString())),
-      h("div", {}, h("div", { class: "k" }, "Size"), h("div", { class: "v" }, fmtBytes(plan.size))),
-      h("div", {}, h("div", { class: "k" }, "Free space"), freeV)),
-    pickedList,
-    spaceBox,
+  // Save to: the download folder, or one of your libraries (Settings → Libraries): there each
+  // game goes into the device's folder for its system, BIOS files into its BIOS folder
+  const libs = plan.libraries || [];
+  let lib = libs.some((l) => l.id === store.get("dl.saveto", "")) ? store.get("dl.saveto", "") : "";
+  let inst = null;
+  const folderPart = h("div", { class: "stack tight" },
     h("div", { class: "form tight" }, h("label", { class: "k" }, "Folder"), name),
     h("div", {}, h("div", { class: "k2" }, "Files go to"), dest),
     found.length ? h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · this selection has " + found.join(", "))), choices,
       plan.delete_archives ? h("div", { class: "help" }, "Archives that extract cleanly are deleted afterwards (Settings → Downloads).") : null) : null,
     h("div", {}, h("div", { class: "k2" }, "Files already there", haveLine), haveChoices),
-    nothingNote,
+    nothingNote);
+  const libPart = h("div", { class: "stack tight hidden" });
+  const saveTo = libs.length ? h("select", { class: "input", "aria-label": "Save to", onchange: () => { lib = saveTo.value; store.set("dl.saveto", lib); showTarget(); } },
+    h("option", { value: "", selected: !lib }, "The download folder"), libs.map((l) => h("option", { value: l.id, selected: lib === l.id }, `${l.name} (${l.kind})`))) : null;
+  function showInstall(x) {
+    const n = (k, one, many) => `${k.toLocaleString()} ${k === 1 ? one : many}`;
+    put(libPart,
+      h("div", { class: "muted small" }, h("b", {}, x.kind), " · ", h("span", { class: "mono" }, x.path)),
+      x.systems.length ? h("div", { class: "rv-list" }, x.systems.map((m) => h("div", { class: "rv-item" },
+        h("div", { class: "rv-t" }, h("b", {}, m.system), h("span", { class: "faint small" }, n(m.files, "file", "files"))),
+        h("div", { class: "rv-s muted small" }, h("span", { class: "mono" }, m.to), h("span", { class: "faint" }, "  ← " + m.from))))) : null,
+      x.bios ? h("div", { class: "muted small" }, n(x.bios, "BIOS file", "BIOS files") + " into ", h("span", { class: "mono" }, x.bios_dir)) : null,
+      x.media || x.lists ? h("div", { class: "muted small" }, [x.media ? `${n(x.media, "picture, video or manual", "pictures, videos and manuals")} go along with the games` : "",
+        x.lists ? `${x.media ? "; their" : "Their"} entries go into the game list${x.lists === 1 ? "" : "s"}, so they show with their names and pictures` : ""].join("") + ".") : null,
+      x.lists_note ? h("div", { class: "note" }, x.lists_note) : null,
+      x.there ? h("div", { class: "note ok-note" }, `${n(x.there, "file is", "files are")} already there at the same size (${fmtBytes(x.there_bytes)}): they're skipped.`) : null,
+      x.skipped ? h("div", { class: "note" }, `${n(x.skipped, "file has", "files have")} no place in a library, so ${x.skipped === 1 ? "it's" : "they're"} left out: only games in a system folder and BIOS files go in one (`,
+        h("span", { class: "mono" }, x.skipped_examples.join(", ") + (x.skipped > x.skipped_examples.length ? ", …" : "")), ").") : null,
+      x.too_many ? h("div", { class: "note bad" }, "That's too much to put into a library in one go: pick systems or games.")
+        : !x.files ? h("div", { class: "note bad" }, "Nothing here has a place in this library.") : null);
+  }
+  // one copy per game: when the selection takes whole system folders, each game's best release only
+  let one = false;
+  const filesV = h("div", { class: "v" }, plan.files.toLocaleString()), sizeV = h("div", { class: "v" }, fmtBytes(plan.size));
+  const oneNote = h("span", { class: "faint small" });
+  const oneBox = plan.one_can ? h("label", { class: "check", title: "Of each game's regions, revisions and betas, only the best release (with all its discs)" },
+    h("input", { type: "checkbox", onchange: async (ev) => {
+      one = ev.target.checked;
+      let r;
+      try { r = await api(`/shares/${s.id}/plan`, { body: { ...(sel || {}), one_per_game: one } }); } catch (e) { fail(e); return; }
+      filesV.textContent = r.files.toLocaleString(); sizeV.textContent = fmtBytes(r.size);
+      plan.size = r.size;
+      oneNote.textContent = one && r.one ? ` · ${r.one.games.toLocaleString()} games, ${r.one.left_out.toLocaleString()} other release files left out` : "";
+      showSpace();
+      if (lib) showTarget();
+    } }), `One copy per game (${(plan.regions || []).join(", ")} first)`, oneNote) : null;
+  async function showTarget() {
+    folderPart.classList.toggle("hidden", !!lib); libPart.classList.toggle("hidden", !lib);
+    inst = null;
+    if (queueBtn) queueBtn.disabled = !!lib;
+    if (!lib) { freeV.textContent = plan.free != null ? fmtBytes(plan.free) : "—"; showQueue(); return; }
+    put(libPart, h("div", { class: "muted" }, h("span", { class: "spin" }), " Working out where it all goes…"));
+    const want = lib;
+    let r;
+    try { r = await api(`/shares/${s.id}/plan`, { body: { ...(sel || {}), library: lib, one_per_game: one } }); } catch (e) { put(libPart, h("div", { class: "note bad" }, cap(e.message))); return; }
+    if (want !== lib) return;
+    inst = r.install;
+    showInstall(inst);
+    freeV.textContent = inst.free != null ? fmtBytes(inst.free) : "—";
+    if (queueBtn) { queueBtn.disabled = !inst.files || inst.too_many; queueBtn.textContent = "Queue into " + inst.name; }
+  }
+  modal({ title: more.title || "Download from " + shareTitle(s), body: [
+    more.title ? h("div", { class: "muted" }, "From ", h("b", {}, shareTitle(s))) : null,
+    h("div", { class: "facts" },
+      h("div", {}, h("div", { class: "k" }, "Files"), filesV),
+      h("div", {}, h("div", { class: "k" }, "Size"), sizeV),
+      h("div", {}, h("div", { class: "k" }, "Free space"), freeV)),
+    pickedList,
+    oneBox,
+    spaceBox,
+    saveTo ? h("div", { class: "form tight" }, h("label", { class: "k" }, "Save to"), saveTo) : null,
+    folderPart, libPart,
     plan.active_jobs && plan.active_jobs.length ? h("div", { class: "note" }, `Another download from this share is ${plan.active_jobs[0].state}: this one starts when it finishes.`) : null,
-  ], actions: [{ label: "Cancel" }, { label: over && !plan.min_free_gb ? "Queue anyway" : "Queue download", kind: "primary", ref: (b) => { queueBtn = b; }, run: async () => {
-    const r = await api(`/shares/${s.id}/download`, { body: { ...(sel || {}), name: name.value.trim(), extract: mode, existing, label: more.label } });
-    toast(`Queued ${r.files.toLocaleString()} file${r.files === 1 ? "" : "s"} · ${fmtBytes(r.size)}`, "ok", { label: "View in Activity", href: "#/activity" });
+  ], actions: [{ label: "Cancel" }, { label: over && !plan.min_free_gb ? "Queue anyway" : "Queue download", kind: "primary", ref: (b) => { queueBtn = b; if (lib) showTarget(); }, run: async () => {
+    const body = lib ? { ...(sel || {}), library: lib, label: more.label, one_per_game: one } : { ...(sel || {}), name: name.value.trim(), extract: mode, existing, label: more.label, one_per_game: one };
+    const r = await api(`/shares/${s.id}/download`, { body });
+    toast(`Queued ${r.files.toLocaleString()} file${r.files === 1 ? "" : "s"} · ${fmtBytes(r.size)}${lib && inst ? " into " + inst.name : ""}`, "ok", { label: "View in Activity", href: "#/activity" });
     if (done) done(r);
   } }] });
 }
@@ -1973,7 +2036,7 @@ async function pageActivity() {
             SESSION.local && j.out_dir ? ["Show in folder", () => revealJob(j.job_id)] : null,
             j.out_dir ? ["Copy folder path", () => copyText(j.out_dir)] : null,
             ["Remove from history (files stay)", act(() => api(`/jobs/${j.job_id}`, { method: "DELETE" }))],
-            ["Delete the files too…", act(async () => {
+            j.library ? null : ["Delete the files too…", act(async () => {
               if (await confirmBox("Delete files", `Delete “${jobLabel(j)}” and its folder${j.out_dir ? " " + j.out_dir : ""}? This can't be undone.`, "Delete files", "danger solid")) await api(`/jobs/${j.job_id}?files=1`, { method: "DELETE" });
             }), "danger"],
           ]) }, icon("more"))))))) : emptyState(null, null, "No finished jobs yet"));
@@ -2022,6 +2085,66 @@ function folderNote(out, r, use) {
 }
 const checkFolder = (path) => api("/setup/folder", { body: { path } }).catch((e) => ({ ok: false, error: e.message }));
 const testMsg = (r) => cap(r.message || "");
+
+const LIB_KINDS = { retrobat: "RetroBat", batocera: "Batocera", esde: "ES-DE / EmuDeck", launchbox: "LaunchBox" };
+const LIB_HELP = {
+  retrobat: ["RetroBat's folder", "D:\\RetroBat", "The one with roms and bios in it."],
+  batocera: ["Batocera's share", "\\\\BATOCERA\\share", "Its network share (or the drive it's on). The one with roms and bios in it."],
+  esde: ["ROMs folder", "D:\\Emulation\\roms", "The folder with a folder per system (EmuDeck: Emulation\\roms)."],
+  launchbox: ["LaunchBox's folder", "D:\\LaunchBox", "The one with Games, Data and Images in it."],
+};
+// libraryDialog edits one library (l = null: a new one); onSave(library) stores it.
+function libraryDialog(l, onSave) {
+  const isNew = !l;
+  l = l || { kind: "retrobat", name: "", path: "", data: "", refresh: null };
+  const kind = h("select", { class: "input" }, Object.entries(LIB_KINDS).map(([v, n]) => h("option", { value: v, selected: v === l.kind }, n)));
+  const name = h("input", { class: "input", value: l.name, placeholder: "e.g. Living room PC" });
+  const path = h("input", { class: "input", value: l.path });
+  const data = h("input", { class: "input", value: l.data || "", placeholder: "e.g. D:\\Emulation\\tools\\downloaded_media" });
+  const refresh = h("input", { class: "input", value: l.refresh || "", placeholder: "none" });
+  let refreshTouched = !isNew;
+  refresh.addEventListener("input", () => { refreshTouched = true; });
+  const pathLabel = h("label", { class: "k" }), pathHelp = h("div", { class: "help" });
+  const dataRow = [h("label", { class: "k" }, "Media folder"), h("div", { class: "inline nowrap-row" }, data, browseBtn(data)),
+    h("div", { class: "help" }, "ES-DE's downloaded_media, where its pictures, videos and manuals go (EmuDeck: Emulation\\tools\\downloaded_media, or Emulation\\storage\\downloaded_media on Windows). Without it, games go in without them.")];
+  const result = h("div", { class: "muted" });
+  let t = null;
+  const check = async () => {
+    const r = await api("/libraries/check", { body: collect(true) }).catch((e) => ({ ok: false, error: e.message }));
+    if (!refreshTouched && r.default_refresh !== undefined) refresh.value = r.default_refresh;
+    if (kind.value === "esde" && !data.value.trim() && r.media_guess) data.value = r.media_guess;
+    result.className = r.ok ? (r.warn ? "note warn" : "note ok-note") : "note bad";
+    result.textContent = r.ok ? (r.warn ? cap(r.warn) : `Found ${r.systems} system folder${r.systems === 1 ? "" : "s"} in ${r.roms}.`) : cap(r.error);
+    return r.ok;
+  };
+  const showKind = () => {
+    const [lbl, ph, help] = LIB_HELP[kind.value];
+    pathLabel.textContent = lbl; path.placeholder = ph; pathHelp.textContent = help;
+    for (const el of dataRow) el.classList.toggle("hidden", kind.value !== "esde");
+    if (!refreshTouched) refresh.value = { retrobat: "http://127.0.0.1:1234/reloadgames", batocera: "http://batocera:1234/reloadgames" }[kind.value] || "";
+  };
+  kind.addEventListener("change", () => { showKind(); check(); });
+  path.addEventListener("input", () => { clearTimeout(t); t = setTimeout(check, 400); });
+  data.addEventListener("input", () => { clearTimeout(t); t = setTimeout(check, 400); });
+  const collect = (forCheck) => {
+    const x = { id: l.id, kind: kind.value, name: name.value.trim(), path: path.value.trim(), data: kind.value === "esde" ? data.value.trim() : "" };
+    if (refreshTouched || !forCheck) x.refresh = refresh.value.trim();
+    if (!refreshTouched && !forCheck) delete x.refresh;   // the server fills in the usual one
+    return x;
+  };
+  showKind();
+  if (!isNew) check();
+  modal({ title: isNew ? "Add a library" : `Edit ${l.name}`, wide: true, body: h("div", { class: "form" },
+    ...field("Kind", kind), ...field("Name", name, "How it shows in the download review."),
+    pathLabel, h("div", { class: "inline nowrap-row" }, path, browseBtn(path)), pathHelp,
+    ...dataRow,
+    ...field("Reload address", refresh, "usnfetch calls it after adding games, so EmulationStation reloads its game lists (Batocera's and RetroBat's answer on port 1234). From another computer, Batocera only answers with System settings → Frontend developer options → Enable public web API access on. Empty: none."),
+    h("div", { class: "full" }, result)),
+  actions: [{ label: "Check", run: async () => { await check(); return false; } }, { label: "Cancel" }, { label: isNew ? "Add" : "Save", kind: "primary", run: async () => {
+    if (!path.value.trim()) { result.className = "note bad"; result.textContent = "Give its folder."; return false; }
+    if (!(await onSave(collect(false)))) return false;   // refused: the dialog stays, with what was typed
+  } }] });
+}
 
 // providerDialog edits one provider (a = null: a new one); onSave(provider, isNew) stores it.
 function providerDialog(a, onSave) {
@@ -2343,6 +2466,10 @@ async function pageSettings() {
   const advSet = {};
   const adv = (k, label, input, help) => (advSet[k] = advField(label, input, help, advWhy(k)));
   const remark = () => { for (const [k, els] of Object.entries(advSet)) els.mark(advWhy(k)); };
+  const regionsIn = h("input", { class: "input", value: (s.regions || []).join(", "), placeholder: "USA, World, Europe, Japan" });
+  regionsIn.addEventListener("change", async () => {
+    if (await saveOn(downloads, { regions: regionsIn.value.split(",").map((x) => x.trim()).filter(Boolean) })) regionsIn.value = s.regions.join(", ");
+  });
   // the download folder is checked as it's typed: whether it can be used, and how much room it has
   const dlState = h("div", { class: "fstate" });
   let dlT = null;
@@ -2357,6 +2484,7 @@ async function pageSettings() {
       ...field("Also single .zip / .7z", sws.extract_standalone[1], "Off keeps them zipped: ROM, BIOS and asset packs are meant to stay that way."),
       ...field("Delete archives after", sws.delete_archives[1], "Only for sets that extracted cleanly."),
       ...field("Keep free (GB)", d.min_free_gb, "Downloads pause when the download drive gets this full, and carry on by themselves once there's room again. 0 turns it off."),
+      ...field("Preferred regions", regionsIn, "For “One copy per game”: of each game's releases, the first region here that it has, best first. Separate them with commas."),
       ...field("Windows notifications", sws.notify[1], "From the tray icon when a download finishes or fails, or the disk fills up."),
       ...adv("verify", "Verify SHA-256", sws.verify[1], "Hash each file against the share's index when it completes."),
       ...adv("max_parallel_jobs", "Parallel jobs", d.max_parallel_jobs, "How many downloads run at once."),
@@ -2374,6 +2502,27 @@ async function pageSettings() {
     }
   });
   for (const [k, [el]] of Object.entries(sws)) el.addEventListener("change", async () => { if (await saveOn(downloads, { [k]: el.checked })) remark(); });
+
+  // libraries: the devices' game collections a download can go into
+  const libBody = h("div");
+  const saveLibs = async (list) => { const ok = await saveOn(libraries, { libraries: list }); if (ok) renderLibs(); return ok; };
+  function renderLibs() {
+    put(libBody, s.libraries.length
+      ? h("div", { class: "tablewrap" }, h("table", { class: "t cardrows" },
+          h("thead", {}, h("tr", {}, h("th", {}, "Library"), h("th", {}, "Kind"), h("th", {}, "Reloads"), h("th", { class: "act" }, ""))),
+          h("tbody", {}, s.libraries.map((l) => h("tr", {},
+            h("td", { class: "title-cell" }, h("div", { class: "t1", style: { fontWeight: 600 } }, l.name), h("div", { class: "faint mono" }, l.path)),
+            h("td", {}, LIB_KINDS[l.kind] || l.kind),
+            h("td", { class: "muted small" }, l.refresh ? h("span", { class: "mono", title: "usnfetch calls this after adding games, so the front-end reloads its game lists" }, l.refresh) : "—"),
+            h("td", { class: "act" },
+              h("button", { class: "btn sm ghost icon", title: "Edit", onclick: () => libraryDialog(l, (x) => saveLibs(s.libraries.map((y) => (y.id === l.id ? x : y)))) }, icon("edit")),
+              h("button", { class: "btn sm ghost icon danger", title: "Remove (its games stay)", onclick: async () => {
+                if (await confirmBox("Remove library", `Remove ${l.name} from usnfetch? Nothing in ${l.path} is touched.`, "Remove", "danger solid")) saveLibs(s.libraries.filter((y) => y.id !== l.id));
+              } }, icon("trash"))))))))
+      : h("div", { class: "muted" }, "None yet. Add the RetroBat, Batocera, ES-DE or LaunchBox you play on, and downloads can go straight into it: each game into its system's folder, BIOS files into its BIOS folder."));
+  }
+  const libraries = panel("libraries", "folder", "Libraries", h("button", { class: "btn", onclick: () => libraryDialog(null, (x) => saveLibs([...s.libraries, x])) }, icon("plus"), "Add library"), libBody);
+  renderLibs();
 
   // web access
   const cur = h("input", { class: "input", type: "password", autocomplete: "current-password", placeholder: "Current password" });
@@ -2447,9 +2596,9 @@ async function pageSettings() {
         ...group("density", "Density", [["comfortable", "Comfortable", h("div", { class: "pv lines" }, h("b"), h("b"), h("b"))], ["compact", "Compact", h("div", { class: "pv lines tight" }, h("b"), h("b"), h("b"), h("b"), h("b"))]]))));
   }
   renderAppearance();
-  const jump = h("nav", { class: "jumps" }, [["providers", "Usenet providers"], ["downloads", "Downloads"], ["speed", "Speed & schedule"], ["web", "Web access"], ["appearance", "Appearance"]]
+  const jump = h("nav", { class: "jumps" }, [["providers", "Usenet providers"], ["downloads", "Downloads"], ["libraries", "Libraries"], ["speed", "Speed & schedule"], ["web", "Web access"], ["appearance", "Appearance"]]
     .map(([id, label]) => h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); $("#set-" + id).scrollIntoView({ behavior: "smooth", block: "start" }); } }, label)));
-  view.append(jump, h("div", { class: "stack" }, accounts, downloads, speed, web, appearance));
+  view.append(jump, h("div", { class: "stack" }, accounts, downloads, libraries, speed, web, appearance));
   renderAccounts();
 }
 

@@ -67,6 +67,12 @@ type Job struct {
 	// folder common to the selection is dropped, so resumed jobs keep their layout.
 	Layout   string   `json:"layout,omitempty"`
 	Warnings []string `json:"warnings,omitempty"` // problems that did not fail the job (extraction)
+	// Library: the library the job puts its files in ("" = the download folder), and Dest where
+	// each one goes in it (share path with / -> full path), worked out when it was queued (web/library.go).
+	// FileSel is then exactly Dest's files; nothing is extracted; OutDir is the library's folder.
+	Library string            `json:"library,omitempty"`
+	Dest    map[string]string `json:"dest,omitempty"`
+	Meta    []LibMeta         `json:"meta,omitempty"` // its games' entries for the device's game lists (libmeta.go)
 	// Picked says what of the share the job takes ("" = all of it; "Disc 2", "5 items"):
 	// jobs of one share share a folder name, so this is what tells them apart.
 	Picked string `json:"picked,omitempty"`
@@ -219,6 +225,9 @@ func (j *Job) Wants(path string) bool {
 		return true
 	}
 	p := strings.ReplaceAll(path, "\\", "/")
+	if j.exact[p] { // a library job's files are named with / (Job.Dest)
+		return true
+	}
 	for _, pre := range j.prefixes {
 		if strings.HasPrefix(p, pre) {
 			return true
@@ -229,6 +238,7 @@ func (j *Job) Wants(path string) bool {
 
 // JobView is what the API shows of a job.
 type JobView struct {
+	Library     string         `json:"library,omitempty"` // into this library (Job.Library)
 	JobID       string         `json:"job_id"`
 	Link        string         `json:"link"`
 	Name        string         `json:"name"`
@@ -264,7 +274,7 @@ type JobView struct {
 func (j *Job) View(full bool) JobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	v := JobView{JobID: j.ID, Link: j.Link, Name: j.Name, NameAuto: j.NameAuto, State: j.State, Detail: j.Detail,
+	v := JobView{Library: j.Library, JobID: j.ID, Link: j.Link, Name: j.Name, NameAuto: j.NameAuto, State: j.State, Detail: j.Detail,
 		Added: j.Added, Started: j.Started, Finished: j.Finished, OutDir: j.OutDir, Size: j.Size, DoneCount: j.doneCount,
 		PlanOnly: j.PlanOnly, IndexFile: j.IndexFile, Current: j.current, FilePos: j.filePos, Phase: j.State, Bytes: j.bytesPrev,
 		ExtractMode: j.ExtractMode, Warnings: j.Warnings, Picked: j.Picked}
@@ -508,11 +518,14 @@ type AddOptions struct {
 	Name                      string
 	Password, ArchivePassword string
 	PlanOnly                  bool
-	FileSel                   []string // nil = the whole share
-	ExtractMode               string   // "" = the settings' default
-	Existing                  string   // "" (skip same-size files), ExistingVerify, ExistingRedownload
-	Picked                    string   // what of the share this is, for telling jobs apart (see Job.Picked)
-	Size                      int64    // the planned size, shown while it waits (0 = not known yet)
+	FileSel                   []string          // nil = the whole share
+	ExtractMode               string            // "" = the settings' default
+	Existing                  string            // "" (skip same-size files), ExistingVerify, ExistingRedownload
+	Picked                    string            // what of the share this is, for telling jobs apart (see Job.Picked)
+	Size                      int64             // the planned size, shown while it waits (0 = not known yet)
+	Library                   string            // into this library (see Job.Library), with Dest
+	Dest                      map[string]string // share path -> where it goes in the library
+	Meta                      []LibMeta         // the games' entries for the device's game lists
 }
 
 func sameSel(a, b []string) bool {
@@ -543,7 +556,7 @@ func (m *Manager) AddJob(link string, o AddOptions) (*Job, error) {
 	}
 	m.mu.Lock()
 	for _, id := range m.order {
-		if j := m.jobs[id]; j.Link == link && activeStates[j.State] && sameSel(j.FileSel, o.FileSel) {
+		if j := m.jobs[id]; j.Link == link && activeStates[j.State] && j.Library == o.Library && (o.Library != "" || sameSel(j.FileSel, o.FileSel)) && (o.Library == "" || sameDest(j.Dest, o.Dest)) {
 			m.mu.Unlock()
 			m.Log(fmt.Sprintf("not adding duplicate of %s (%s) for the same link and selection", j.ID, j.State))
 			return j, nil
@@ -561,6 +574,19 @@ func (m *Manager) AddJob(link string, o AddOptions) (*Job, error) {
 	j.Picked, j.Size = o.Picked, max(0, o.Size)
 	if o.FileSel != nil {
 		j.FileSel = append([]string{}, o.FileSel...)
+	}
+	if o.Library != "" { // into a library: exactly the files it has a place for, as they are
+		lib, ok := m.Settings.LibraryByID(o.Library)
+		if !ok || len(o.Dest) == 0 {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("no such library, or nothing that goes in it")
+		}
+		j.Library, j.Dest, j.Meta, j.OutDir, j.ExtractMode = lib.ID, o.Dest, o.Meta, lib.Path, ExtractOff
+		j.FileSel = make([]string, 0, len(o.Dest))
+		for p := range o.Dest {
+			j.FileSel = append(j.FileSel, p)
+		}
+		sort.Strings(j.FileSel)
 	}
 	m.jobs[j.ID] = j
 	m.order = append(m.order, j.ID)
@@ -721,7 +747,7 @@ func (m *Manager) Delete(id string, removeFiles bool) bool {
 	j.removeFiles = removeFiles
 	j.mu.Unlock()
 	if !running {
-		if removeFiles && j.OutDir != "" {
+		if removeFiles && j.OutDir != "" && j.Library == "" { // a library's folder is never deleted
 			m.removeDir(j)
 		}
 		m.dropIndex(j)
@@ -917,7 +943,7 @@ func (m *Manager) run(j *Job) {
 		}
 		if j.deleted {
 			m.dropIndex(j)
-			if j.removeFiles && j.OutDir != "" {
+			if j.removeFiles && j.OutDir != "" && j.Library == "" {
 				m.removeDir(j)
 			}
 		}
@@ -950,6 +976,12 @@ func (m *Manager) run(j *Job) {
 	}
 	if state == "completed" {
 		m.dropIndex(j)
+	}
+	if lib, ok := m.Settings.LibraryByID(j.Library); ok && (state == "completed" || state == "failed") && !j.deleted && !m.shuttingDown.Load() {
+		m.applyLibMeta(j, state == "completed") // the games' entries into the device's game lists (libmeta.go)
+		if state == "completed" {
+			m.refreshLibrary(lib) // and its front-end reloads them (library.go)
+		}
 	}
 	m.finish(j, state, detail)
 }
@@ -1121,7 +1153,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	}
 	// a job carrying on keeps the folder its finished files are in (one from before categories
 	// went is in <download folder>/<category>/<name>); else its folder by its name
-	if j.OutDir == "" || m.Store.DoneDistinct([]string{j.ID}) == 0 {
+	if j.Library == "" && (j.OutDir == "" || m.Store.DoneDistinct([]string{j.ID}) == 0) {
 		j.OutDir = JobOutDir(s, j.Name)
 	}
 	j.Size = 0
@@ -1131,7 +1163,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	j.mu.Unlock()
 	m.mu.Lock()
 	for _, o := range m.jobs {
-		if o != j && o.Link != j.Link && o.OutDir != "" && strings.EqualFold(o.OutDir, j.OutDir) {
+		if o != j && o.Link != j.Link && o.OutDir != "" && j.Library == "" && o.Library == "" && strings.EqualFold(o.OutDir, j.OutDir) {
 			lnk, _ := share.ParseLink(j.Link)
 			j.Name = fmt.Sprintf("%s [%s]", j.Name, lnk.FolderID[:8])
 			j.OutDir = JobOutDir(s, j.Name)
@@ -1140,7 +1172,8 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	}
 	var clash *Job
 	for _, o := range m.jobs {
-		if o != j && runningStates[o.State] && o.OutDir != "" && strings.EqualFold(o.OutDir, j.OutDir) {
+		// jobs into a library share its folder, each with files of its own (Job.Dest)
+		if o != j && runningStates[o.State] && o.OutDir != "" && j.Library == "" && o.Library == "" && strings.EqualFold(o.OutDir, j.OutDir) {
 			clash = o
 		}
 	}
@@ -1148,6 +1181,22 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	if clash != nil {
 		return "failed", "output folder in use by running job " + clash.ID
 	}
+	for j.Library != "" { // into a library: an earlier job writing some of the same files goes first
+		o := m.sameFiles(j)
+		if o == nil {
+			break
+		}
+		j.mu.Lock()
+		j.Detail = "waiting for " + o.Label() + ", which puts some of the same files in the library"
+		j.mu.Unlock()
+		if j.cancel.Load() {
+			return "stopped", "stopped"
+		}
+		time.Sleep(2 * time.Second)
+	}
+	j.mu.Lock()
+	j.Detail = ""
+	j.mu.Unlock()
 	if err := os.MkdirAll(j.OutDir, 0o755); err != nil {
 		return "failed", err.Error()
 	}
@@ -1155,6 +1204,9 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 		return "stopped", "stopped while planning"
 	}
 	outPath := func(f share.FileEntry) string {
+		if j.Dest != nil { // into a library: where it was given a place (keys use /)
+			return j.Dest[strings.ReplaceAll(f.Path, "\\", "/")]
+		}
 		return filepath.Join(j.OutDir, SafeRelPath(StripTop(f.Path, top)))
 	}
 	// files already in place (an earlier download, a copy): checked, then counted as done
@@ -1596,4 +1648,44 @@ func legacyTop(sel []string, shareTop string) string {
 		}
 	}
 	return first
+}
+
+// sameDest: two library jobs that put the same files in the same places.
+func sameDest(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// sameFiles: a library job added before j, still running, that writes any file j writes.
+func (m *Manager) sameFiles(j *Job) *Job {
+	mine := make(map[string]bool, len(j.Dest))
+	for _, d := range j.Dest {
+		mine[strings.ToLower(d)] = true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, o := range m.jobs {
+		if o == j || o.Library != j.Library || o.Added > j.Added || (o.Added == j.Added && o.ID > j.ID) {
+			continue
+		}
+		o.mu.Lock()
+		running := runningStates[o.State]
+		o.mu.Unlock()
+		if !running {
+			continue
+		}
+		for _, d := range o.Dest {
+			if mine[strings.ToLower(d)] {
+				return o
+			}
+		}
+	}
+	return nil
 }

@@ -576,6 +576,9 @@ func (ix *Index) File(fid int64) (*FileEntry, error) {
 
 func (ix *Index) FileByPath(path string) (*FileEntry, error) {
 	f, err := scanFile(ix.rw.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", path))
+	if err == sql.ErrNoRows && strings.Contains(path, "/") { // named the folder tree's way: the share's may use \
+		f, err = scanFile(ix.rw.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", strings.ReplaceAll(path, "/", `\`)))
+	}
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
