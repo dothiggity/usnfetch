@@ -31,7 +31,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -44,10 +44,20 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # 7-Zip is on both runner images, so internal/extract runs its archive tests; WinRAR's rar
+      # is not, so the RAR-set tests skip, as they do on a machine without it.
       - name: Unit tests
-        # 7-Zip is on both runner images, so internal/extract runs its archive tests; WinRAR's
-        # rar is not, so the RAR-set tests skip, as they do on a machine without it.
+        if: runner.os != 'Linux'
         run: go test -count=1 ./...
+
+      - name: Unit tests, with the race detector
+        # The same tests, also watching for two goroutines touching the same data without a lock
+        # (the disk guard reading a job's state did, before 0.12.0). -race needs cgo and a C
+        # compiler: the Ubuntu image has gcc, so it runs there.
+        if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
 
   release:
     needs: test

@@ -111,6 +111,7 @@ type Pool struct {
 	backup   map[*nntp.Account]chan struct{}
 	reaping  bool          // the idle-connection reaper is running
 	closed   chan struct{} // closed by Close: stops the reaper
+	idleMax  time.Duration // IdleMax when the pool was made (a test may shorten its own)
 }
 
 type idleConn struct {
@@ -123,7 +124,7 @@ type idleConn struct {
 var IdleMax = 50 * time.Second
 
 func NewPool(s *AccountSet) *Pool {
-	p := &Pool{Accounts: s, idle: map[*nntp.Account][]idleConn{}, backup: map[*nntp.Account]chan struct{}{}, closed: make(chan struct{})}
+	p := &Pool{Accounts: s, idle: map[*nntp.Account][]idleConn{}, backup: map[*nntp.Account]chan struct{}{}, closed: make(chan struct{}), idleMax: IdleMax}
 	for _, a := range s.Backup {
 		p.backup[a] = make(chan struct{}, max(1, a.Connections))
 	}
@@ -137,7 +138,7 @@ func (p *Pool) Get(a *nntp.Account) (*nntp.Conn, error) {
 	p.mu.Lock()
 	if l := p.idle[a]; len(l) > 0 {
 		ic := l[len(l)-1] // the most recently used
-		if time.Since(ic.since) <= IdleMax {
+		if time.Since(ic.since) <= p.idleMax {
 			p.idle[a] = l[:len(l)-1]
 			p.mu.Unlock()
 			return ic.c, nil
@@ -191,7 +192,7 @@ func (p *Pool) DropIdle(a *nntp.Account) {
 // reap closes connections idle past IdleMax (they could not be reused anyway, and each holds a
 // place in its provider's connection budget) until the pool is closed.
 func (p *Pool) reap() {
-	t := time.NewTicker(max(IdleMax/5, 10*time.Millisecond))
+	t := time.NewTicker(max(p.idleMax/5, 10*time.Millisecond))
 	defer t.Stop()
 	for {
 		select {
@@ -204,7 +205,7 @@ func (p *Pool) reap() {
 		for a, l := range p.idle {
 			keep := l[:0]
 			for _, x := range l {
-				if time.Since(x.since) > IdleMax {
+				if time.Since(x.since) > p.idleMax {
 					stale = append(stale, x.c)
 				} else {
 					keep = append(keep, x)

@@ -59,13 +59,11 @@ func TestPoolHandsOverToWaitingDial(t *testing.T) {
 // A connection left idle in a pool gives its place back once it is past IdleMax, even when
 // nothing asks the pool for another one.
 func TestPoolReapsIdle(t *testing.T) {
-	old := IdleMax
-	IdleMax = 100 * time.Millisecond
-	t.Cleanup(func() { IdleMax = old })
 	a := fakeNews(t, map[string]bool{})
 	a.Connections = 3
 	accts, _ := NewAccountSet([]*nntp.Account{a})
 	p := NewPool(accts)
+	p.idleMax = 100 * time.Millisecond // this pool's own: other tests' pools may still be reaping
 	defer p.Close()
 	c, err := p.Get(nil)
 	if err != nil {

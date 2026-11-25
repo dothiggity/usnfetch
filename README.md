@@ -119,7 +119,8 @@ so a browser refresh shows your changes.
 
 Releases: write `.github/release-notes/v<version>.md`, set `Version` in `cmd/usnfetch/serve.go`,
 commit, then `git tag -a v1.2.3 -m "usnfetch 1.2.3"` and `git push origin main v1.2.3`. GitHub
-Actions tests it and publishes every download with GoReleaser.
+Actions tests it (on Linux with Go's race detector too) and publishes every download with
+GoReleaser.
 
 ## License
 
