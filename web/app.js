@@ -1352,7 +1352,19 @@ async function renderShare(s, path) {
           h("span", {}, a.account, a.backup ? h("span", { class: "faint" }, ` (priority ${a.priority ?? 1})`) : ""),
           a.error ? h("span", { class: "chip bad", title: a.error }, "error") : h("b", {}, `${a.available}/${ck.sampled}`)))) : null,
         h("div", { class: "s" }, ck && ck.checked_at ? `${ck.sampled} articles sampled · ${ago(ck.checked_at)} · ` : "",
-          h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); runCheck(512); } }, "Check more thoroughly")))) : null);
+          h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); runCheck(512); } }, "Check more thoroughly"))),
+      h("div", { class: "card wide" }, h("div", { class: "k" }, "Start over"),
+        h("div", { class: "s" }, "Delete this build's saved index, box art and search lists, and forget when it was opened and what's inside. Opening it again starts from scratch. Its health and your downloads stay."),
+        h("div", {}, h("button", { class: "btn sm danger", style: { marginTop: "6px" }, onclick: forgetBuild }, icon("trash"), "Forget this build")))) : null);
+  }
+
+  async function forgetBuild() {
+    if (!(await confirmBox("Forget this build", `${shareTitle(s)}: its saved index, box art and search lists are deleted, and what opening it learned is forgotten. Opening it again fetches its index from Usenet, like the first time.`, "Forget it", "danger solid"))) return;
+    try {
+      const r = await api("/shares/forget", { body: s.link ? { link: s.link } : { catalog_id: sid } });
+      toast(`Forgotten: ${r.files.toLocaleString()} cached file${r.files === 1 ? "" : "s"} (${fmtBytes(r.bytes)})`, "ok");
+      location.hash = "#/catalog";
+    } catch (e) { fail(e); }
   }
 
   // sample 0: watch a check already running (opening the share starts one), without a toast
@@ -2228,14 +2240,10 @@ async function pageSystem() {
     if (!(await confirmBox("Restart usnfetch", "usnfetch stops and starts again. Downloads pause for a moment and carry on where they were.", "Restart"))) return;
     try { await api("/system/restart", { body: {} }); } catch (e) { fail(e); return; }
     toast("Restarting…");
-    await new Promise((r) => setTimeout(r, 2500));
-    for (let i = 0; i < 40; i++) {      // back up? then reload
-      try { const r = await fetch("/api/session", { credentials: "same-origin" }); if (r.ok) { location.reload(); return; } } catch { /* not yet */ }
-      await new Promise((r) => setTimeout(r, 750));
-    }
-    toast("usnfetch has not come back yet; check the tray icon", "bad");
+    await backAgain();
   } }, icon("refresh"), "Restart");
-  toolbar(restartBtn);
+  const resetBtn = h("button", { class: "btn", title: "Wipe caches, history, the catalog or settings, to test from scratch", onclick: () => resetDialog().catch(fail) }, icon("trash"), "Reset…");
+  toolbar(resetBtn, restartBtn);
   $("#view").append(cards, h("div", { class: "panel" }, h("div", { class: "head" }, icon("system"), h("h2", {}, "Log"), h("span", { class: "grow" }),
     h("div", { class: "search" }, icon("search"), filter), h("label", { class: "check" }, follow, "Follow"),
     h("button", { class: "btn sm", title: "Copy the lines shown", onclick: () => copyText(logs.textContent) }, icon("copy"), "Copy")),
@@ -2267,6 +2275,62 @@ async function pageSystem() {
       seq = l.seq;
     } catch { /* ignore */ }
   });
+}
+
+// backAgain: wait for usnfetch to be back after a restart, then load the web app afresh.
+async function backAgain(to) {
+  await new Promise((r) => setTimeout(r, 2500));
+  for (let i = 0; i < 60; i++) {
+    try { const r = await fetch("/api/session", { credentials: "same-origin" }); if (r.ok) { if (to) location.hash = to; location.reload(); return; } } catch { /* not yet */ }
+    await new Promise((r) => setTimeout(r, 750));
+  }
+  toast("usnfetch has not come back yet; check the tray icon", "bad");
+}
+
+// resetDialog: System → Reset. Pick what to wipe; it happens as usnfetch starts again, before
+// anything has the files open. Downloaded files are never touched.
+async function resetDialog() {
+  const r = await api("/system/reset");
+  const n = (x, one, many) => `${x.toLocaleString()} ${x === 1 ? one : many}`;
+  const opts = [
+    ["caches", true, "Caches", `Share indexes, box art, game and BIOS search lists: ${n(r.caches.indexes, "index", "indexes")}, ${n(r.caches.art, "picture", "pictures")}, ${fmtBytes(r.caches.bytes)}. Each build's index is fetched again the first time you open it.`],
+    ["opened", true, "What opening shares learned", `For the ${n(r.opened, "share", "shares")} you've opened: when, the details and what's inside. The catalog looks never-opened.`],
+    ["health", false, "Health checks", `Link OK / Gone and availability, for ${n(r.health, "share", "shares")}. They're checked again as shares are opened.`],
+    ["catalog", false, "The catalog", `The ${n(r.catalog, "link", "links")} in it. Import your list again afterwards.`],
+    ["jobs", false, "Download queue and history", `${n(r.jobs, "download", "downloads")}. The downloaded files stay where they are.`],
+    ["settings", false, "Settings", "Back to their defaults: download folder, speed, schedule, extracting, everything. Your web password stays."],
+  ];
+  const boxes = {};
+  const keep = h("input", { type: "checkbox", checked: true });
+  const keepRow = h("label", { class: "check reset-keep" }, keep, `Keep my Usenet provider${r.providers === 1 ? "" : "s"} (${r.providers}). Untick for the first-run setup.`);
+  const btn = { el: null };
+  const sync = () => {
+    keepRow.classList.toggle("hidden", !boxes.settings.checked);
+    if (btn.el) btn.el.disabled = r.downloading || !Object.values(boxes).some((b) => b.checked);
+  };
+  const rows = opts.map(([k, on, label, help]) => {
+    boxes[k] = h("input", { type: "checkbox", checked: on, onchange: sync });
+    return h("label", { class: "choice" }, boxes[k], h("div", {}, h("div", { class: "cl" }, label), h("div", { class: "ch" }, help)));
+  });
+  const preset = (keys) => { for (const [k, b] of Object.entries(boxes)) b.checked = keys.includes(k); sync(); };
+  modal({ title: "Reset usnfetch", wide: true, body: [
+    h("div", { class: "muted" }, "Start over, to test from scratch. Pick what to wipe: it happens as usnfetch restarts, and your downloaded files in ",
+      h("span", { class: "mono" }, r.complete_dir), " are never touched."),
+    h("div", { class: "row-btns" }, h("span", { class: "faint small" }, "Quick picks:"),
+      h("button", { class: "btn sm", onclick: () => preset(["caches", "opened"]) }, "Fresh look"),
+      h("button", { class: "btn sm", onclick: () => preset(["caches", "opened", "health", "catalog", "jobs", "settings"]) }, "Everything")),
+    h("div", { class: "choices" }, rows), keepRow,
+    r.downloading ? h("div", { class: "note bad" }, "A download is running: pause it or let it finish first.") : null,
+    r.can_restart ? null : h("div", { class: "note" }, "This usnfetch can't restart itself (it runs in a terminal), so the reset happens the next time you start it."),
+  ], actions: [{ label: "Cancel" }, { label: r.can_restart ? "Reset and restart" : "Reset at the next start", kind: "danger solid", ref: (b) => { btn.el = b; sync(); }, run: async () => {
+    const body = { keep_providers: keep.checked };
+    for (const [k, b] of Object.entries(boxes)) body[k] = b.checked;
+    const res = await api("/system/reset", { body });
+    if (!res.restart) { toast("The reset happens the next time usnfetch starts", "ok"); return; }
+    toast("Resetting and restarting…");
+    await backAgain(body.catalog || body.opened ? "#/catalog" : null);
+  } }] });
+  sync();
 }
 
 // ---------------------------------------------------------------- boot

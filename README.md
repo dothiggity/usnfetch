@@ -106,6 +106,10 @@ which points out any that are gone and leaves them out.
 
 ## What it's like to use
 
+Opening a share for the first time takes a moment while its index comes in from Usenet: a little
+text-mode progress bar, in the colours of your theme, shows how far it's got (the details go to the
+log on the System page). After that it opens straight away.
+
 Open a share and you get its folders and files, with search, sorting by name or size, and for game
 collections (LaunchBox, RetroBat and other EmulationStation setups) a gallery of box art. You can
 tick files and folders as you go; the selection sticks while you wander around other folders.
@@ -114,9 +118,10 @@ Videos, pictures and text files can be previewed in the browser, streamed straig
 
 Before anything downloads, you get a review: how big it is next to the free space you have, where
 the files will end up, what kind of archives are in there and how much of it you already have.
-That's also where you decide whether to unpack archives. By default it unpacks RAR and multi-part
-sets but leaves single `.zip` and `.7z` files alone, because ROM and BIOS packs are supposed to stay
-zipped.
+Each download gets a folder of its own in your download folder, named after the share, with the
+share's own folders inside it; you can rename it in the review. That's also where you decide
+whether to unpack archives. By default it unpacks RAR and multi-part sets but leaves single `.zip`
+and `.7z` files alone, because ROM and BIOS packs are supposed to stay zipped.
 
 While things download, a bar along the bottom of every page shows what's going on: the job, the
 file it's on, progress, ETA, speed and free space, with a pause button. The Activity page has the
@@ -187,6 +192,30 @@ in your old jobs, catalog and settings the first time it starts. Share indexes s
 versions are converted to the current, smaller format in the background, without downloading
 anything again.
 
+## Starting over
+
+To try something from scratch, there are two ways to wipe what usnfetch has learned. Neither one
+ever touches the files you've downloaded.
+
+**One build:** open it, then Details → Forget this build. Its saved index, box art and search
+lists are deleted and usnfetch forgets when it was opened and what's in it, so the next time you
+open it, it comes in from Usenet like the first time. Its health (Link OK, Available) stays.
+
+**Everything:** System → Reset. Tick what to wipe:
+
+- **Caches:** every saved share index, box art and the game and BIOS search lists.
+- **What opening shares learned:** when each was opened, its details and what's inside, so the
+  catalog looks never-opened.
+- **Health checks:** Link OK / Gone and the availability checks.
+- **The catalog:** every link in it.
+- **Download queue and history.**
+- **Settings:** back to their defaults. Untick "Keep my Usenet providers" as well and you get the
+  first-run setup again. The web password always stays, so a reset never locks you out.
+
+"Fresh look" picks the first two, "Everything" the lot. usnfetch then restarts and does the wipe
+as it starts, before anything has the files open. If it runs in a terminal (`usnfetch serve`) it
+can't restart itself, so the reset happens the next time you start it.
+
 ## A couple of command-line extras
 
     usnfetch list  --link usn://… --server … --user … --pass …     # what's in a share
@@ -212,14 +241,14 @@ Release builds are plain cross-compiles with no C toolchain needed:
 A quick map of the code:
 
     cmd/usnfetch/      the program itself: serve, tray, list, fetch, set-password, version
-    internal/share/    share links, manifests and signatures, building, converting and searching the index
+    internal/share/    share links, manifests and signatures, the index, the games and BIOS files in a build
     internal/engine/   the downloading: connections, decrypting, packed small files, streaming, speed limit, checks
     internal/nntp/     a small NNTP client, and each provider's shared connection budget
     internal/yenc/     yEnc decoding
-    internal/app/      settings, the job queue, the schedule, saved state, upkeep of the index cache
+    internal/app/      settings, the job queue, the schedule, saved state, upkeep of the index cache, resets
     internal/catalog/  reading link lists, and the launcher and device each entry is for
     internal/extract/  finding and unpacking archives (7-Zip / UnRAR)
-    internal/web/      the web API: shares, gallery and box art, health checks, files already on disk, setup
+    internal/web/      the web API: shares, search, gallery and box art, health checks, files on disk, setup
     web/               the browser UI
 
 ## Tests

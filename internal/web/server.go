@@ -720,6 +720,7 @@ func (s *Server) routes() {
 	s.searchRoutes()
 	s.gameRoutes()
 	s.biosRoutes()
+	s.resetRoutes()
 
 	// shares
 	s.api("POST /api/shares/open", func(w http.ResponseWriter, r *http.Request) (any, error) {

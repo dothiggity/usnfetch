@@ -287,6 +287,69 @@ func (s *Store) SetShareInfo(link string, m map[string]any) error {
 	return err
 }
 
+// healthKeys: what checking a share learned (whether its links and articles are still
+// there); everything else in its info is what opening it learned.
+var healthKeys = map[string]bool{"link_check": true, "check": true}
+
+// ForgetShareInfo forgets what opening a share learned (opened) and what checking it did
+// (health); with both, the share is as if never seen.
+func (s *Store) ForgetShareInfo(link string, opened, health bool) error {
+	m := s.ShareInfo(link)
+	if m == nil {
+		return nil
+	}
+	for k := range m {
+		if healthKeys[k] && health || !healthKeys[k] && opened {
+			delete(m, k)
+		}
+	}
+	if len(m) == 0 {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_, err := s.db.Exec("DELETE FROM shareinfo WHERE link = ?", link)
+		return err
+	}
+	return s.SetShareInfo(link, m)
+}
+
+// ForgetAllShareInfo: ForgetShareInfo for every share; how many had something forgotten.
+func (s *Store) ForgetAllShareInfo(opened, health bool) (int, error) {
+	n := 0
+	for link, m := range s.AllShareInfo() {
+		had := false
+		for k := range m {
+			had = had || healthKeys[k] && health || !healthKeys[k] && opened
+		}
+		if !had {
+			continue
+		}
+		if err := s.ForgetShareInfo(link, opened, health); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
+// ClearCatalog: every link out of the catalog.
+func (s *Store) ClearCatalog() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("DELETE FROM catalog")
+	return err
+}
+
+// ClearJobs: the download queue and history gone (the downloaded files stay where they are).
+func (s *Store) ClearJobs() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec("DELETE FROM jobs"); err != nil {
+		return err
+	}
+	_, err := s.db.Exec("DELETE FROM job_done")
+	return err
+}
+
 // ---- one-time import of the Python versions' JSON files ----
 
 // Migrate imports usnfetch_gui_state.json (+ its done logs), usnfetch_catalog.json and

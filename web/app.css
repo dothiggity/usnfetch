@@ -186,6 +186,8 @@ table.t td.act { width: 1%; white-space: nowrap; text-align: right; }
 .gm-t { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .gm-t b { font-size: 14.5px; }
 .gm-b { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* System → Reset */
+.reset-keep { margin: 4px 0 0 30px; }
 /* "working on it" while a share opens, in place of its log: a text-mode progress bar in the
    icon's style (block characters, the sparkle) in the theme's colours, on the well logs use */
 .thinking.ansi { --an-hi: var(--accent); --an-lo: color-mix(in srgb, var(--accent) 48%, var(--well)); display: grid; gap: 8px; padding: 12px 14px; margin: 4px 0;

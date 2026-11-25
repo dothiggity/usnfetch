@@ -299,9 +299,22 @@ func NewManager(dataDir string, start bool) (*Manager, error) {
 		return nil, err
 	}
 	m.Settings = s
+	var reset *ResetOptions // asked for in System → Reset: done now, before anything opens the files
+	oldIndexDir := m.IndexDir()
+	if start {
+		if reset = pendingReset(dataDir); reset != nil && reset.Settings {
+			if err := m.resetSettings(reset.KeepProviders); err != nil {
+				m.Log("reset: the settings couldn't be reset: " + err.Error())
+			}
+		}
+	}
 	if m.Store, err = OpenStore(filepath.Join(dataDir, "usnfetch.db")); err != nil {
 		m.lock.Release()
 		return nil, err
+	}
+	if reset != nil {
+		m.applyReset(*reset, oldIndexDir, m.IndexDir())
+		_ = os.Remove(resetPath(dataDir))
 	}
 	if err := m.Store.Migrate(dataDir, m.Log); err != nil {
 		m.Log("import of the previous version's files failed: " + err.Error())
