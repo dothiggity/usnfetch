@@ -80,15 +80,27 @@ type session struct {
 	LastUsed time.Time
 	art      map[string]*artIndex // gallery artwork per game folder kind (gallery.go)
 	password string               // the share password it was opened with (to fetch the full index later)
+	out      func(string)         // the app's log (the System page): every line goes there too
 }
 
+// log: what happens with the share, kept with it (for the API) and in the app's log,
+// with the share's name in front. The web app shows its own progress, not these lines.
 func (s *session) log(m string) {
 	s.mu.Lock()
 	s.Log = append(s.Log, time.Now().Format("[15:04:05] ")+m)
 	if len(s.Log) > 200 {
 		s.Log = s.Log[len(s.Log)-200:]
 	}
+	title, out := s.Title, s.out
 	s.mu.Unlock()
+	if out != nil {
+		if r := []rune(title); len(r) > 48 {
+			title = string(r[:47]) + "…"
+		} else if title == "" {
+			title = "share " + s.ID
+		}
+		out(title + ": " + m)
+	}
 }
 
 func New(version string, m *app.Manager, cat *app.Catalog, static fs.FS, devDir string) *Server {
@@ -358,7 +370,7 @@ func (s *Server) openShare(link, title, password string) (*session, error) {
 			title = str(info["name"])
 		}
 	}
-	ss := &session{ID: id, Link: link, Title: title, State: "loading", LastUsed: time.Now(), password: password}
+	ss := &session{ID: id, Link: link, Title: title, State: "loading", LastUsed: time.Now(), password: password, out: s.M.Log}
 	s.sessions[id] = ss
 	s.smu.Unlock()
 	go s.loadShare(ss, password)
@@ -1122,11 +1134,7 @@ func (s *Server) catalogList(w http.ResponseWriter, r *http.Request) (any, error
 		srcs = append(srcs, k)
 	}
 	sort.Strings(srcs)
-	def := s.M.Settings.CatalogCategory
-	if def == "" {
-		def = "Default"
-	}
-	return map[string]any{"entries": out, "sources": srcs, "categories": s.M.Settings.Categories, "default_category": def,
+	return map[string]any{"entries": out, "sources": srcs,
 		"tags": map[string]any{"launchers": tl, "devices": td, "groups": catalog.DeviceGroups}, "link_check": s.linkCheckState()}, nil
 }
 
@@ -1260,15 +1268,8 @@ func (s *Server) sharePlan(w http.ResponseWriter, r *http.Request) (any, error) 
 		return nil, err
 	}
 	st := s.M.Settings
-	cat := str(b["category"])
-	if cat == "" {
-		cat = st.CatalogCategory
-	}
-	if cat == "" {
-		cat = "Default"
-	}
 	name, nameAuto, top := s.destination(ss, ix, strings.TrimSpace(str(b["name"])))
-	outDir := app.JobOutDir(st, cat, name)
+	outDir := app.JobOutDir(st, name)
 	var example string
 	switch {
 	case len(sel.folders) > 0 && sel.folders[0] != "":
@@ -1336,7 +1337,7 @@ func (s *Server) sharePlan(w http.ResponseWriter, r *http.Request) (any, error) 
 		}
 	}
 	return map[string]any{"files": sel.count, "size": sel.size, "free": free, "complete_dir": st.CompleteDir, "sep": string(os.PathSeparator),
-		"name": name, "name_auto": nameAuto, "category": cat, "categories": st.Categories, "out_dir": outDir, "example": example, "top": top,
+		"name": name, "name_auto": nameAuto, "out_dir": outDir, "example": example, "top": top,
 		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives, "archives": arc, "single_examples": singles,
 		"active_jobs": active}, nil
 }
@@ -1391,18 +1392,11 @@ func (s *Server) shareDownload(w http.ResponseWriter, r *http.Request) (any, err
 	if err != nil {
 		return nil, err
 	}
-	cat := str(b["category"])
-	if cat == "" {
-		cat = s.M.Settings.CatalogCategory
-	}
-	if cat == "" {
-		cat = "Default"
-	}
 	picked := pickedLabel(sel)
 	if l := strings.TrimSpace(str(b["label"])); l != "" && sel.sel != nil { // what was picked, in words ("Final Fantasy VII (PlayStation)")
 		picked = string([]rune(l)[:min(120, len([]rune(l)))])
 	}
-	j, err := s.M.AddJob(ss.Link, app.AddOptions{Name: s.jobNameFor(ss, strings.TrimSpace(str(b["name"]))), Category: cat,
+	j, err := s.M.AddJob(ss.Link, app.AddOptions{Name: s.jobNameFor(ss, strings.TrimSpace(str(b["name"]))),
 		FileSel: sel.sel, ExtractMode: mode, Existing: str(b["existing"]), Picked: picked, Size: sel.size})
 	if err != nil {
 		return nil, err
@@ -1548,7 +1542,6 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 	getStr("sevenzip_path", &st.SevenZipPath)
 	getStr("unrar_path", &st.UnrarPath)
 	getStr("index_dir", &st.IndexDir)
-	getStr("catalog_category", &st.CatalogCategory)
 	getInt("missing_retries", &st.MissingRetries)
 	getInt("max_parallel_jobs", &st.MaxParallelJobs)
 	getInt("stream_connections", &st.StreamConnections)
@@ -1584,26 +1577,6 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 		st.Schedule = rules
 	}
 	getBool("delete_archives", &st.DeleteArchives)
-	if v, ok := b["categories"]; ok {
-		var cats []string
-		var raw []string
-		if l, ok := v.([]any); ok {
-			for _, x := range l {
-				raw = append(raw, str(x))
-			}
-		} else {
-			raw = strings.Split(str(v), ",")
-		}
-		for _, c := range raw {
-			if c = strings.TrimSpace(c); c != "" {
-				cats = append(cats, c)
-			}
-		}
-		if len(cats) == 0 {
-			cats = []string{"Default"}
-		}
-		st.Categories = cats
-	}
 	if v, ok := b["accounts"]; ok {
 		var in []map[string]any
 		if l, ok := v.([]any); ok {

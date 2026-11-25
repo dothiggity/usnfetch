@@ -350,6 +350,41 @@ async function openShare(body) {
   location.hash = "#/share/" + s.id;
 }
 
+// thinking: a "working on it" animation and a line saying what's going on, in place of the
+// raw log while a share opens (the log itself is on the System page). el.update(share) moves
+// it along.
+function thinking() {
+  const text = h("div", { class: "th-text" }, "Finding the share on Usenet");
+  const bar = h("div", { class: "th-bar hidden" }, h("i"));
+  const sub = h("div", { class: "th-sub faint small" });
+  const el = h("div", { class: "thinking", role: "status", "aria-live": "polite" },
+    h("div", { class: "th-dots", "aria-hidden": "true" }, h("span"), h("span"), h("span")), h("div", { class: "th-body" }, text, bar, sub));
+  const t0 = Date.now();
+  el.update = (s) => {
+    const p = sharePhase(s);
+    if (text.textContent !== p.text) text.textContent = p.text;
+    bar.classList.toggle("hidden", p.pct == null);
+    if (p.pct != null) bar.firstChild.style.width = Math.max(3, p.pct) + "%";
+    sub.textContent = Date.now() - t0 > 8000 ? "Big shares take a few seconds per TB the first time. After that they open straight away." : "";
+  };
+  return el;
+}
+
+// sharePhase: what a share being opened is up to, in words (and how far, when that's known),
+// from the latest line of its log.
+function sharePhase(s) {
+  const l = (((s && s.log) || []).slice(-1)[0] || "").replace(/^\[[^\]]*\]\s*/, "");
+  const m = l.match(/\((\d+)%\)/), pct = m ? +m[1] : null;
+  if (s && s.fetching) return { text: "Fetching the rest of its index", pct };
+  if (/articles fetched|shard \d+\/\d+/.test(l)) return { text: "Downloading its index", pct: pct ?? 0 };
+  if (/^core index: \d+ (shards|part)/.test(l)) return { text: "Downloading its index", pct: 0 };
+  if (/converting/.test(l)) return { text: "Updating its saved index (only this once)" };
+  if (/indexed in|pool entries|cached in|saved file list|unzipped/.test(l)) return { text: "Sorting out its folders" };
+  if (/^share:|^signature:/.test(l)) return { text: "Checking who shared it" };
+  if (/checking availability/.test(l)) return { text: "Nearly there" };
+  return { text: "Finding the share on Usenet" };
+}
+
 // prepareShare opens a share for its download review, with a small progress dialog while
 // its index loads; resolves the ready share, or null (cancelled, password, or a problem shown)
 async function prepareShare(body, title) {
@@ -359,13 +394,14 @@ async function prepareShare(body, title) {
   if (s0.state === "ready") return s0;
   return new Promise((resolve) => {
     let done = false, t = null;
-    const lines = h("div", { class: "loglines" });
+    const th = thinking();
+    th.update(s0);
     const finish = (v) => { if (done) return; done = true; clearInterval(t); close(); resolve(v); };
-    const close = modal({ title: "Preparing the review", body: [h("div", { class: "muted" }, h("span", { class: "spin" }), " Loading the index of ", h("b", {}, title || s0.title || "the share"),
-      ". The first time takes a few seconds per TB; after that it is cached."), lines], actions: [{ label: "Cancel" }], onclose: () => finish(null) });
+    const close = modal({ title: "Getting it ready", body: [h("div", { class: "muted" }, "Opening ", h("b", {}, title || s0.title || "the share"), "."), th],
+      actions: [{ label: "Cancel" }], onclose: () => finish(null) });
     t = setInterval(async () => {
       let s; try { s = await api("/shares/" + s0.id); } catch (e) { fail(e); finish(null); return; }
-      lines.textContent = (s.log || []).slice(-6).join("\n");
+      th.update(s);
       if (s.state === "loading") return;
       if (s.state === "ready") return finish(s);
       finish(null);
@@ -443,7 +479,6 @@ async function reviewShares(src, done) {
   const ok = items.filter((it) => !it.gone), goneN = items.length - ok.length;
   const size = ok.reduce((a, it) => a + (it.size || 0), 0), unknown = ok.filter((it) => it.size == null).length;
   let mode = plan.extract_default, existing = "skip";
-  const cat = h("select", { class: "input" }, plan.categories.map((c) => h("option", { value: c, selected: c === plan.category }, c)));
   const list = h("div", { class: "rv-list" });
   const showList = () => put(list, items.map((it) => h("div", { class: "rv-item" },
     h("div", { class: "rv-t" }, h("b", {}, it.title),
@@ -451,8 +486,8 @@ async function reviewShares(src, done) {
       it.active_jobs && it.active_jobs.length ? h("span", { class: "chip info" }, "already " + it.active_jobs[0].state) : null,
       it.folder_exists ? h("span", { class: "chip warn", title: it.out_dir }, "folder already there") : null),
     h("div", { class: "rv-s muted small" }, it.size != null ? (it.size_listed ? `listed as ${fmtBytes(it.size)}` : fmtBytes(it.size)) : "size known once it starts",
-      " · ", h("span", { class: "mono" }, [plan.complete_dir, safeSeg(cat.value), it.name_known ? safeSeg(it.name) : "<the share's folder name>"].join(plan.sep))))));
-  cat.onchange = showList; showList();
+      " · ", h("span", { class: "mono" }, [plan.complete_dir, it.name_known ? safeSeg(it.name) : "<the share's folder name>"].join(plan.sep))))));
+  showList();
   const over = plan.free != null && size > plan.free;
   const anyThere = items.some((it) => it.folder_exists);
   const choice = (name, cur, opts, set) => h("div", { class: "choices" }, opts.map(([v, label, help]) => h("label", { class: "choice" },
@@ -469,7 +504,6 @@ async function reviewShares(src, done) {
         unknown ? h("div", { class: "faint small" }, `${unknown} not opened yet: their size shows once they start`) : null),
       h("div", {}, h("div", { class: "k" }, "Free space"), h("div", { class: "v" + (over ? " bad" : "") }, plan.free != null ? fmtBytes(plan.free) : "—"))),
     over ? h("div", { class: "note bad" }, `Not enough space: ${fmtBytes(size - plan.free)} more is needed in ${plan.complete_dir}. A job fails when it starts unless space is freed first.`) : null,
-    h("div", { class: "form tight" }, h("label", { class: "k" }, "Category"), cat),
     h("div", {}, h("div", { class: "k2" }, "Files go to"), list),
     h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · counted when each download starts")),
       choice("xmode", mode, [["off", "Don't extract", "Keep every file exactly as it was shared."],
@@ -480,7 +514,7 @@ async function reviewShares(src, done) {
         ["verify", "Check them first", "Compare each one's SHA-256 with the share and download only what differs."],
         ["redownload", "Download everything again", "Overwrite what is there."]], (v) => { existing = v; })) : null,
   ], actions: !ok.length ? [{ label: "Close" }] : [{ label: "Cancel" }, { label: over ? "Queue anyway" : ok.length === 1 ? "Queue download" : `Queue ${ok.length} downloads`, kind: "primary", run: async () => {
-    const body = { category: cat.value, extract: mode, existing };
+    const body = { extract: mode, existing };
     const r = src.ids ? await api("/catalog/download", { body: { ...body, ids: ok.map((it) => it.id) } }) : await api("/jobs", { body: { ...body, text: ok.map((it) => it.link).join("\n") } });
     toast(`Queued ${r.jobs.length} download${r.jobs.length === 1 ? "" : "s"}` + (r.errors.length ? ` · ${r.errors.length} not queued: ${r.errors[0]}` : ""), r.errors.length ? "" : "ok",
       { label: "View in Activity", href: "#/activity" });
@@ -504,7 +538,7 @@ async function pageCatalog() {
   setTitle("Catalog");
   const f = { q: store.get("cat.q", ""), source: store.get("cat.source", ""), launcher: store.get("cat.launcher", ""), device: store.get("cat.device", ""),
     seen: store.get("cat.seen", ""), hide: store.get("cat.hide", false), sort: store.get("cat.sort", "title") };
-  let data = { entries: [], sources: [], categories: ["Default"], tags: { launchers: [], devices: [], groups: [] } };
+  let data = { entries: [], sources: [], tags: { launchers: [], devices: [], groups: [] } };
   let groupOf = {}, deviceRank = {};   // device -> its group; device -> its place in the device list
   const sel = new Set();
   const view = $("#view");
@@ -776,10 +810,13 @@ async function ensureFull(s, title) {
   return new Promise((resolve) => {
     let done = false, t = null;
     const finish = (v) => { if (done) return; done = true; clearInterval(t); close(); resolve(v); };
-    const close = modal({ title: "One moment", body: h("div", { class: "muted" }, h("span", { class: "spin" }), " Fetching the rest of the index of ", h("b", {}, title),
-      " first: only its file list was saved. Big shares take a minute or two. The download starts by itself."), actions: [{ label: "Cancel" }], onclose: () => finish(null) });
+    const th = thinking();
+    th.update(s);
+    const close = modal({ title: "One moment", body: [h("div", { class: "muted" }, "Only the file list of ", h("b", {}, title),
+      " was saved, so the rest of its index comes first. The download starts by itself."), th], actions: [{ label: "Cancel" }], onclose: () => finish(null) });
     t = setInterval(async () => {
       let x; try { x = await api("/shares/" + s.id); } catch (e) { fail(e); finish(null); return; }
+      th.update(x);
       if (x.fetching) return;
       finish(x.list_only ? null : x);
       if (x.list_only) modal({ title: "Couldn't fetch the index", body: h("div", { class: "note bad" }, cap(x.fetch_error || "it stopped")), actions: [{ label: "Close", kind: "primary" }] });
@@ -1013,10 +1050,9 @@ const safeSeg = (x) => String(x || "").replace(/[<>:"|?*\x00-\x1f]/g, "_").repla
 async function reviewDownload(s, sel, done, more = {}) {
   const plan = await api(`/shares/${s.id}/plan`, { body: sel || {} });
   let mode = plan.extract_default;
-  const cat = h("select", { class: "input" }, plan.categories.map((c) => h("option", { value: c, selected: c === plan.category }, c)));
   const name = h("input", { class: "input", value: plan.name });
   const dest = h("div", { class: "dest mono" });
-  const showDest = () => { dest.textContent = [plan.complete_dir, safeSeg(cat.value), safeSeg(name.value.trim() || plan.name)].join(plan.sep) + plan.sep + (plan.example || ""); };
+  const showDest = () => { dest.textContent = [plan.complete_dir, safeSeg(name.value.trim() || plan.name)].join(plan.sep) + plan.sep + (plan.example || ""); };
   let existing = "skip";
   const haveLine = h("span", { class: "muted" }, " · checking…");
   const haveChoices = h("div", { class: "choices hidden" }, [
@@ -1039,7 +1075,7 @@ async function reviewDownload(s, sel, done, more = {}) {
     const seq = ++haveSeq;
     haveLine.textContent = " · checking…";
     let r;
-    try { r = await api(`/shares/${s.id}/ondisk`, { body: { ...(sel || {}), category: cat.value, name: name.value.trim() } }); }
+    try { r = await api(`/shares/${s.id}/ondisk`, { body: { ...(sel || {}), name: name.value.trim() } }); }
     catch (e) { haveLine.textContent = ""; return; }
     if (seq !== haveSeq) return;
     allThere = false;
@@ -1054,7 +1090,7 @@ async function reviewDownload(s, sel, done, more = {}) {
     showQueue();
   }
   const recount = () => { clearTimeout(haveTimer); haveTimer = setTimeout(countHave, 400); };
-  cat.onchange = () => { showDest(); recount(); }; name.oninput = () => { showDest(); recount(); }; showDest(); countHave();
+  name.oninput = () => { showDest(); recount(); }; showDest(); countHave();
   const a = plan.archives;
   const found = [a.single ? `${a.single.toLocaleString()} single .zip/.7z` : null, a.rar ? `${a.rar.toLocaleString()} RAR` : null,
     a.split ? `${a.split.toLocaleString()} multi-part set${a.split === 1 ? "" : "s"}` : null, a.empty ? `${a.empty} empty file${a.empty === 1 ? "" : "s"} named like archives` : null].filter(Boolean);
@@ -1080,7 +1116,7 @@ async function reviewDownload(s, sel, done, more = {}) {
       h("div", {}, h("div", { class: "k" }, "Free space"), h("div", { class: "v" + (over ? " bad" : "") }, plan.free != null ? fmtBytes(plan.free) : "—"))),
     pickedList,
     over ? h("div", { class: "note bad" }, `Not enough space: ${fmtBytes(plan.size - plan.free)} more is needed in ${plan.complete_dir}. The job fails when it starts unless space is freed first.`) : null,
-    h("div", { class: "form tight" }, h("label", { class: "k" }, "Category"), cat, h("label", { class: "k" }, "Folder"), name),
+    h("div", { class: "form tight" }, h("label", { class: "k" }, "Folder"), name),
     h("div", {}, h("div", { class: "k2" }, "Files go to"), dest),
     found.length ? h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · this selection has " + found.join(", "))), choices,
       plan.delete_archives ? h("div", { class: "help" }, "Archives that extract cleanly are deleted afterwards (Settings → Downloads).") : null) : null,
@@ -1088,7 +1124,7 @@ async function reviewDownload(s, sel, done, more = {}) {
     nothingNote,
     plan.active_jobs && plan.active_jobs.length ? h("div", { class: "note" }, `Another download from this share is ${plan.active_jobs[0].state}: this one starts when it finishes.`) : null,
   ], actions: [{ label: "Cancel" }, { label: over ? "Queue anyway" : "Queue download", kind: "primary", ref: (b) => { queueBtn = b; }, run: async () => {
-    const r = await api(`/shares/${s.id}/download`, { body: { ...(sel || {}), category: cat.value, name: name.value.trim(), extract: mode, existing, label: more.label } });
+    const r = await api(`/shares/${s.id}/download`, { body: { ...(sel || {}), name: name.value.trim(), extract: mode, existing, label: more.label } });
     toast(`Queued ${r.files.toLocaleString()} file${r.files === 1 ? "" : "s"} · ${fmtBytes(r.size)}`, "ok", { label: "View in Activity", href: "#/activity" });
     if (done) done(r);
   } }] });
@@ -1118,8 +1154,10 @@ async function pageShare(parts) {
 
   // loading / error / password
   if (s.state !== "ready") {
-    const box = h("div", { class: "panel" }, h("div", { class: "head" }, h("span", { class: "spin" }), h("h2", {}, s.title || "Loading share")),
-      h("div", { class: "body" }, h("div", { class: "muted", style: { marginBottom: "10px" } }, "Fetching the share's manifest and index from Usenet. Large shares take a few seconds per TB the first time; after that the index is cached."), h("div", { class: "loglines" })));
+    const th = thinking();
+    const head = h("h2", {}, s.title || "Opening the share");
+    const box = h("div", { class: "panel" }, h("div", { class: "head" }, head), h("div", { class: "body" }, th));
+    th.update(s);
     view.replaceChildren(box);
     await new Promise((resolve) => {
       every(900, async () => {
@@ -1130,7 +1168,8 @@ async function pageShare(parts) {
           catch (e2) { fail(e2); }
           return;
         }
-        $(".loglines", box).textContent = (s.log || []).join("\n");
+        th.update(s);
+        if (s.title) head.textContent = s.title;
         if (s.state !== "loading") { page.stop.forEach((f) => f()); page.stop = []; resolve(); }
       });
     });
@@ -1140,7 +1179,7 @@ async function pageShare(parts) {
       const again = h("button", { class: "btn", onclick: () => openShare(store.get("link." + sid, null) ? { link: store.get("link." + sid) } : { catalog_id: sid }).then(route).catch(fail) }, icon("refresh"), "Try again");
       view.replaceChildren(h("div", { class: "note bad" }, cap(s.error)),
         h("p", { class: "row-btns" }, s.error_code === "no_provider" ? h("a", { class: "btn primary", href: "#/setup/providers" }, "Add a provider") : null, again),
-        h("div", { class: "loglines" }, (s.log || []).join("\n")));
+        h("p", { class: "faint small" }, "The details are in the log on the ", h("a", { href: "#/system" }, "System page"), "."));
       return;
     }
   }
@@ -1660,7 +1699,7 @@ async function pageActivity() {
         },
         ondrop: (ev) => ev.preventDefault() },
         h("div", { class: "l1" }, h("span", { class: "handle", title: "Drag to change the order" }, icon("drag")), stateChip(j.state),
-          h("span", { class: "nm", title: jobLabel(j) }, j.name, j.picked ? h("span", { class: "picked" }, " — " + j.picked) : null), h("span", { class: "chip plain" }, j.category),
+          h("span", { class: "nm", title: jobLabel(j) }, j.name, j.picked ? h("span", { class: "picked" }, " — " + j.picked) : null),
           h("span", { class: "grow" }),
           idx > 0 ? h("button", { class: "btn sm ghost icon", title: "Move to the top of the queue", onclick: act(() => { moved = j.job_id; setTimeout(() => { moved = null; }, 2500); return api("/jobs/reorder", { body: { ids: [j.job_id, ...ids.filter((x) => x !== j.job_id)] } }); }) }, icon("up")) : null,
           j.state === "paused" ? h("button", { class: "btn sm", title: "Let this download carry on", onclick: act(() => api(`/jobs/${j.job_id}/resume`, { body: {} })) }, icon("play"), "Resume")
@@ -1685,7 +1724,7 @@ async function pageActivity() {
       h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "State"), h("th", {}, "Detail"), h("th", { class: "right" }, "Size"), h("th", {}, "Finished"), h("th", { class: "act" }, ""))),
       h("tbody", {}, d.history.map((j) => h("tr", {},
         h("td", { class: "title-cell" }, h("div", { class: "t1" }, j.name, j.picked ? h("span", { class: "picked" }, " — " + j.picked) : null),
-          h("div", { class: "t2" }, h("span", { class: "chip plain" }, j.category),
+          h("div", { class: "t2" },
             j.out_dir ? h("a", { class: "faint mono path", href: "#", title: "Copy the folder path: " + j.out_dir, onclick: (ev) => { ev.preventDefault(); copyText(j.out_dir); } }, j.out_dir) : null)),
         h("td", { class: "nowrap" }, stateChip(j.state), j.warnings && j.warnings.length ? [" ", h("span", { class: "chip warn", title: j.warnings.join("\n") }, `${j.warnings.length} warning${j.warnings.length === 1 ? "" : "s"}`)] : null),
         h("td", { class: "muted", style: { maxWidth: "380px" } }, j.detail || "",
@@ -1937,7 +1976,7 @@ async function pageSetup(parts) {
     };
     put(card, h("div", { class: "body" }, h("h2", {}, "Folders"),
       h("div", { class: "form" }, h("label", { class: "k" }, "Download folder"), h("div", {}, h("div", { class: "inline nowrap-row" }, dl, browseBtn(dl)), dlState),
-        h("div", { class: "help" }, "Each download gets a folder of its own in here (inside a category folder, \"Default\" unless you choose another). Shares can be very large, so pick a drive with room.")),
+        h("div", { class: "help" }, "Each download gets a folder of its own in here, named after the share. Shares can be very large, so pick a drive with room.")),
       h("details", { class: "more" }, h("summary", {}, "Advanced: where share indexes are kept"),
         h("div", { class: "form" }, h("label", { class: "k" }, "Share index folder"), h("div", {}, h("div", { class: "inline nowrap-row" }, ix, browseBtn(ix)), ixState),
           h("div", { class: "help" }, "Working files, about 200 MB per TB of share, kept while a share is open or its download can resume. Leave it empty to keep them in the data folder."))),
@@ -2001,7 +2040,7 @@ async function pageSettings() {
     accBody, h("div", { class: "help", style: { marginTop: "10px" } }, h("b", {}, "Priority: "), PRIORITY_HELP));
 
   // downloads
-  const d = { complete_dir: h("input", { class: "input", value: s.complete_dir }), categories: h("input", { class: "input", value: (s.categories || []).join(", ") }),
+  const d = { complete_dir: h("input", { class: "input", value: s.complete_dir }),
     missing_retries: h("input", { class: "input", type: "number", min: 0, max: 10, value: s.missing_retries, style: { width: "110px" } }),
     max_parallel_jobs: h("input", { class: "input", type: "number", min: 1, max: 8, value: s.max_parallel_jobs, style: { width: "110px" } }),
     stream_connections: h("input", { class: "input", type: "number", min: 1, max: 64, value: s.stream_connections, style: { width: "110px" } }),
@@ -2020,8 +2059,7 @@ async function pageSettings() {
   showTools();
   const downloads = panel("downloads", "download", "Downloads", null,
     h("div", { class: "form" },
-      h("label", { class: "k" }, "Download folder"), h("div", { class: "inline nowrap-row" }, d.complete_dir, browseBtn(d.complete_dir)), h("div", { class: "help" }, "Jobs land in <folder>/<category>/<job name>."),
-      ...field("Categories", d.categories, "Comma separated."),
+      h("label", { class: "k" }, "Download folder"), h("div", { class: "inline nowrap-row" }, d.complete_dir, browseBtn(d.complete_dir)), h("div", { class: "help" }, "Each download gets a folder of its own in here, named after the share."),
       ...field("Verify SHA-256", sws.verify[1], "Hash each file against the share's index when it completes."),
       ...field("Extract archives", sws.extract[1], "RAR archives and multi-part sets (.z01, .zip.001, .7z.001). Each download can choose otherwise when you queue it."),
       ...field("Also single .zip / .7z", sws.extract_standalone[1], "Off keeps them zipped: ROM, BIOS and asset packs are meant to stay that way."),
@@ -2040,7 +2078,6 @@ async function pageSettings() {
   const nums = new Set(["missing_retries", "max_parallel_jobs", "stream_connections", "index_cache_gb", "min_free_gb"]);
   for (const [k, el] of Object.entries(d)) el.addEventListener("change", async () => {
     if (await saveOn(downloads, { [k]: nums.has(k) ? +el.value : el.value })) {
-      if (k === "categories") el.value = (s.categories || []).join(", ");
       if (k === "sevenzip_path" || k === "unrar_path") showTools();
     }
   });

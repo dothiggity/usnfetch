@@ -15,7 +15,6 @@ import (
 type Settings struct {
 	NNTP              *NNTPSettings    `json:"nntp,omitempty"` // older single account; moved into Accounts on load
 	CompleteDir       string           `json:"complete_dir"`
-	Categories        []string         `json:"categories"`
 	Verify            bool             `json:"verify"`
 	MissingRetries    int              `json:"missing_retries"`
 	MaxParallelJobs   int              `json:"max_parallel_jobs"`
@@ -24,7 +23,6 @@ type Settings struct {
 	DeleteArchives    bool             `json:"delete_archives"`
 	SevenZipPath      string           `json:"sevenzip_path"`
 	UnrarPath         string           `json:"unrar_path"`
-	CatalogCategory   string           `json:"catalog_category"`
 	IndexDir          string           `json:"index_dir"`
 	IndexCacheGB      int              `json:"index_cache_gb"` // full share indexes kept up to this (on disk); past it, only file lists
 	MinFreeGB         int              `json:"min_free_gb"`    // downloads pause when the download drive has less free than this (0 = never)
@@ -76,7 +74,6 @@ func defaultSettings() Settings {
 	home, _ := os.UserHomeDir()
 	return Settings{
 		CompleteDir:       filepath.Join(home, "Downloads", "usnfetch"),
-		Categories:        []string{"Default", "games", "images", "tv", "movies"},
 		Verify:            true,
 		MissingRetries:    3,
 		MaxParallelJobs:   1,
@@ -159,9 +156,6 @@ func LoadSettings(path string) (*Settings, error) {
 	}
 	if s.Schedule == nil {
 		s.Schedule = []ScheduleRule{}
-	}
-	if len(s.Categories) == 0 {
-		s.Categories = []string{"Default"}
 	}
 	if s.Web.Port == 0 {
 		s.Web.Port = 7979

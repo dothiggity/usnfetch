@@ -34,8 +34,7 @@ func (s *Server) destination(ss *session, ix *share.Index, name string) (string,
 
 func (s *Server) localRoots(ss *session, ix *share.Index) []app.OutputRoot {
 	name, _, top := s.destination(ss, ix, "")
-	cat := s.M.Settings.CatalogCategory
-	roots := append(s.M.OutputRoots(ss.Link, top), app.OutputRoot{Dir: app.JobOutDir(s.M.Settings, cat, name), Strip: top})
+	roots := append(s.M.OutputRoots(ss.Link, top), app.OutputRoot{Dir: app.JobOutDir(s.M.Settings, name), Strip: top})
 	seen := map[string]bool{}
 	var out []app.OutputRoot
 	for _, r := range roots {
@@ -122,7 +121,7 @@ func folderThere(ls listings, roots []app.OutputRoot, sharePath string) bool {
 }
 
 // shareOnDisk counts how much of a selection is already in the folder a download with
-// this category and name would use (what "skip files already on disk" would skip).
+// this name would use (what "skip files already on disk" would skip).
 func (s *Server) shareOnDisk(w http.ResponseWriter, r *http.Request) (any, error) {
 	ss, ix, err := s.ready(r.PathValue("sid"))
 	if err != nil {
@@ -137,11 +136,7 @@ func (s *Server) shareOnDisk(w http.ResponseWriter, r *http.Request) (any, error
 		return map[string]any{"counted": false}, nil
 	}
 	name, _, top := s.destination(ss, ix, strings.TrimSpace(str(b["name"])))
-	cat := str(b["category"])
-	if cat == "" {
-		cat = s.M.Settings.CatalogCategory
-	}
-	roots := []app.OutputRoot{{Dir: app.JobOutDir(s.M.Settings, cat, name), Strip: top}}
+	roots := []app.OutputRoot{{Dir: app.JobOutDir(s.M.Settings, name), Strip: top}}
 	ls := listings{}
 	var files, partial int64
 	var bytes int64

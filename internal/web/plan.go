@@ -109,14 +109,8 @@ func safeFolderName(s string) string {
 
 // planShares is the review of downloading whole shares: each one's size and folder,
 // the total against the free space, and the download defaults.
-func (s *Server) planShares(links []string, category string) map[string]any {
+func (s *Server) planShares(links []string) map[string]any {
 	st := s.M.Settings
-	if category == "" {
-		category = st.CatalogCategory
-	}
-	if category == "" {
-		category = "Default"
-	}
 	active := map[string][]map[string]any{}
 	for _, j := range s.M.Queue() {
 		active[j.Link] = append(active[j.Link], map[string]any{"id": j.JobID, "name": j.Name, "state": j.State, "picked": j.Picked})
@@ -134,7 +128,7 @@ func (s *Server) planShares(links []string, category string) map[string]any {
 				name = "USN_" + pl.FolderID[:min(12, len(pl.FolderID))] // named after the share's folder once it starts
 			}
 		}
-		out := app.JobOutDir(st, category, name)
+		out := app.JobOutDir(st, name)
 		_, err := os.Stat(out)
 		it := map[string]any{"link": l, "id": f.ID, "title": f.Title, "name": name, "name_known": f.Name != "", "size": nil,
 			"size_listed": f.SizeListed, "files": f.Files, "in_catalog": f.InCatalog, "out_dir": out, "folder_exists": err == nil,
@@ -156,7 +150,7 @@ func (s *Server) planShares(links []string, category string) map[string]any {
 		free = n
 	}
 	return map[string]any{"items": items, "size": total, "unknown": unknown, "gone": gone, "free": free, "complete_dir": st.CompleteDir,
-		"sep": string(os.PathSeparator), "category": category, "categories": st.Categories,
+		"sep":             string(os.PathSeparator),
 		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives}
 }
 
@@ -170,13 +164,6 @@ func (s *Server) queueShares(links []string, b map[string]any) ([]string, []stri
 	if existing != "" && existing != app.ExistingSkip && existing != app.ExistingVerify && existing != app.ExistingRedownload {
 		return nil, nil, fail(400, "existing must be skip, verify or redownload", "bad_existing")
 	}
-	cat := str(b["category"])
-	if cat == "" {
-		cat = s.M.Settings.CatalogCategory
-	}
-	if cat == "" {
-		cat = "Default"
-	}
 	jobs, bad := []string{}, []string{}
 	for _, l := range links {
 		f := s.factsFor(l)
@@ -188,17 +175,13 @@ func (s *Server) queueShares(links []string, b map[string]any) ([]string, []stri
 		if !f.SizeListed {
 			size = f.Size
 		}
-		j, err := s.M.AddJob(l, app.AddOptions{Name: name, Category: cat, Password: str(b["password"]), ArchivePassword: str(b["archive_password"]),
+		j, err := s.M.AddJob(l, app.AddOptions{Name: name, Password: str(b["password"]), ArchivePassword: str(b["archive_password"]),
 			PlanOnly: b["plan_only"] == true, ExtractMode: mode, Existing: existing, Size: size})
 		if err != nil {
 			bad = append(bad, f.Title+": "+err.Error())
 			continue
 		}
 		jobs = append(jobs, j.ID)
-	}
-	if cat != s.M.Settings.CatalogCategory {
-		s.M.Settings.CatalogCategory = cat
-		_ = s.M.SaveSettings()
 	}
 	return jobs, bad, nil
 }
@@ -222,7 +205,7 @@ func (s *Server) planRoutes() {
 		if len(links) == 0 {
 			return nil, fail(400, "nothing selected", "empty")
 		}
-		return s.planShares(links, str(b["category"])), nil
+		return s.planShares(links), nil
 	})
 	s.api("POST /api/catalog/download", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		b := body(r)
@@ -243,7 +226,7 @@ func (s *Server) planRoutes() {
 		if len(links) == 0 && len(bad) == 0 {
 			return nil, fail(400, "no usn:// links in that text", "no_links")
 		}
-		out := s.planShares(links, str(b["category"]))
+		out := s.planShares(links)
 		out["bad"] = bad
 		return out, nil
 	})

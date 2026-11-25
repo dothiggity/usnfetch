@@ -186,6 +186,18 @@ table.t td.act { width: 1%; white-space: nowrap; text-align: right; }
 .gm-t { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .gm-t b { font-size: 14.5px; }
 .gm-b { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* "working on it" while a share opens, in place of its log */
+.thinking { display: flex; gap: 16px; align-items: center; padding: 10px 2px; }
+.th-dots { display: inline-flex; gap: 6px; flex: none; }
+.th-dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); animation: th-bounce 1.2s infinite ease-in-out; }
+.th-dots span:nth-child(2) { animation-delay: .16s; }
+.th-dots span:nth-child(3) { animation-delay: .32s; }
+@keyframes th-bounce { 0%, 75%, 100% { transform: translateY(0) scale(.85); opacity: .35; } 35% { transform: translateY(-8px) scale(1); opacity: 1; } }
+.th-body { flex: 1; min-width: 0; display: grid; gap: 7px; }
+.th-text { font-weight: 650; }
+.th-bar { height: 4px; border-radius: 2px; background: var(--panel-2); overflow: hidden; }
+.th-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .5s ease; }
+@media (prefers-reduced-motion: reduce) { .th-dots span { animation: none; opacity: .8; } }
 /* the search bar: what to search for, then the words */
 .search-bar { display: flex; gap: 8px; align-items: stretch; }
 .search-bar .search { flex: 1; min-width: 0; }

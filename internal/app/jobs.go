@@ -45,7 +45,6 @@ type Job struct {
 	Link            string         `json:"link"`
 	Name            string         `json:"name"`
 	NameAuto        bool           `json:"name_auto"`
-	Category        string         `json:"category"`
 	FileSel         []string       `json:"file_sel"` // share paths, "dir/" = everything under dir; nil = all
 	Password        string         `json:"-"`
 	ArchivePassword string         `json:"-"`
@@ -93,12 +92,9 @@ const LayoutShare = "share"
 
 func now() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
-func newJob(link, name, category string) *Job {
-	j := &Job{ID: "usnf_" + RandomID(6), Link: strings.TrimSpace(link), Name: name, NameAuto: name == "", Category: category,
+func newJob(link, name string) *Job {
+	j := &Job{ID: "usnf_" + RandomID(6), Link: strings.TrimSpace(link), Name: name, NameAuto: name == "",
 		State: "queued", Added: now(), Layout: LayoutShare}
-	if j.Category == "" {
-		j.Category = "Default"
-	}
 	if j.Name == "" {
 		if l, err := share.ParseLink(j.Link); err == nil {
 			j.Name = "USN_" + l.FolderID[:min(12, len(l.FolderID))]
@@ -154,9 +150,6 @@ func restoreJob(raw []byte) (*Job, error) {
 	if j.ID == "" || j.Link == "" {
 		return nil, errors.New("job without id or link")
 	}
-	if j.Category == "" {
-		j.Category = "Default"
-	}
 	if runningStates[j.State] {
 		j.State, j.Detail = "queued", "resumed after restart"
 	}
@@ -196,7 +189,6 @@ type JobView struct {
 	Link        string         `json:"link"`
 	Name        string         `json:"name"`
 	NameAuto    bool           `json:"name_auto"`
-	Category    string         `json:"category"`
 	State       string         `json:"state"`
 	Detail      string         `json:"detail"`
 	Added       float64        `json:"added"`
@@ -228,7 +220,7 @@ type JobView struct {
 func (j *Job) View(full bool) JobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	v := JobView{JobID: j.ID, Link: j.Link, Name: j.Name, NameAuto: j.NameAuto, Category: j.Category, State: j.State, Detail: j.Detail,
+	v := JobView{JobID: j.ID, Link: j.Link, Name: j.Name, NameAuto: j.NameAuto, State: j.State, Detail: j.Detail,
 		Added: j.Added, Started: j.Started, Finished: j.Finished, OutDir: j.OutDir, Size: j.Size, DoneCount: j.doneCount,
 		PlanOnly: j.PlanOnly, IndexFile: j.IndexFile, Current: j.current, FilePos: j.filePos, Phase: j.State, Bytes: j.bytesPrev,
 		ExtractMode: j.ExtractMode, Warnings: j.Warnings, Picked: j.Picked}
@@ -434,14 +426,14 @@ func (m *Manager) dropIndex(j *Job) {
 
 // ---- queue operations ----
 
-func (m *Manager) Add(link, name, category, password, archivePassword string, planOnly bool, fileSel []string) (*Job, error) {
-	return m.AddJob(link, AddOptions{Name: name, Category: category, Password: password, ArchivePassword: archivePassword,
+func (m *Manager) Add(link, name, password, archivePassword string, planOnly bool, fileSel []string) (*Job, error) {
+	return m.AddJob(link, AddOptions{Name: name, Password: password, ArchivePassword: archivePassword,
 		PlanOnly: planOnly, FileSel: fileSel})
 }
 
 // AddOptions for AddJob.
 type AddOptions struct {
-	Name, Category            string
+	Name                      string
 	Password, ArchivePassword string
 	PlanOnly                  bool
 	FileSel                   []string // nil = the whole share
@@ -485,7 +477,7 @@ func (m *Manager) AddJob(link string, o AddOptions) (*Job, error) {
 			return j, nil
 		}
 	}
-	j := newJob(link, o.Name, o.Category)
+	j := newJob(link, o.Name)
 	if o.Existing != "" && o.Existing != ExistingSkip && o.Existing != ExistingVerify && o.Existing != ExistingRedownload {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("unknown handling %q for files already on disk", o.Existing)
@@ -914,12 +906,9 @@ func SafeRelPath(p string) string {
 
 var pathSep = regexp.MustCompile(`[\\/]+`)
 
-// JobOutDir: where a job's files land.
-func JobOutDir(s *Settings, category, name string) string {
-	if category == "" {
-		category = "Default"
-	}
-	return filepath.Join(s.CompleteDir, safeName(category), safeName(name))
+// JobOutDir: where a job's files land: a folder of its own in the download folder.
+func JobOutDir(s *Settings, name string) string {
+	return filepath.Join(s.CompleteDir, safeName(name))
 }
 
 // StripTop drops the folder top (if the share path is inside it) from a share path.
@@ -1041,7 +1030,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	if j.NameAuto && top != "" {
 		j.Name, j.NameAuto = safeName(top), false
 	}
-	j.OutDir = JobOutDir(s, j.Category, j.Name)
+	j.OutDir = JobOutDir(s, j.Name)
 	j.Size = 0
 	for _, f := range chosen {
 		j.Size += f.Size
@@ -1052,7 +1041,7 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 		if o != j && o.Link != j.Link && o.OutDir != "" && strings.EqualFold(o.OutDir, j.OutDir) {
 			lnk, _ := share.ParseLink(j.Link)
 			j.Name = fmt.Sprintf("%s [%s]", j.Name, lnk.FolderID[:8])
-			j.OutDir = filepath.Join(s.CompleteDir, safeName(j.Category), safeName(j.Name))
+			j.OutDir = JobOutDir(s, j.Name)
 			break
 		}
 	}
