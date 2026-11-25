@@ -32,9 +32,23 @@ func (s *Server) destination(ss *session, ix *share.Index, name string) (string,
 	return name, auto, top
 }
 
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
 func (s *Server) localRoots(ss *session, ix *share.Index) []app.OutputRoot {
 	name, _, top := s.destination(ss, ix, "")
 	roots := append(s.M.OutputRoots(ss.Link, top), app.OutputRoot{Dir: app.JobOutDir(s.M.Settings, name), Strip: top})
+	// downloads from before categories went: <download folder>/<category>/<name>
+	base := filepath.Base(app.JobOutDir(s.M.Settings, name))
+	if ents, err := os.ReadDir(s.M.Settings.CompleteDir); err == nil {
+		for _, e := range ents {
+			if p := filepath.Join(s.M.Settings.CompleteDir, e.Name(), base); e.IsDir() && isDir(p) {
+				roots = append(roots, app.OutputRoot{Dir: p, Strip: top})
+			}
+		}
+	}
 	seen := map[string]bool{}
 	var out []app.OutputRoot
 	for _, r := range roots {

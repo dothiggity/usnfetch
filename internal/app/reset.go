@@ -81,9 +81,11 @@ func (m *Manager) resetSettings(keepProviders bool) error {
 
 // applyReset does a reset asked for, at startup (the store is open, nothing else is).
 // indexDirs: where the share indexes were kept, before and after the settings' reset.
-func (m *Manager) applyReset(o ResetOptions, indexDirs ...string) {
+func (m *Manager) applyReset(o ResetOptions, settingsErr error, indexDirs ...string) {
 	var done []string
-	if o.Settings {
+	if o.Settings && settingsErr != nil {
+		done = append(done, "the settings couldn't be reset ("+settingsErr.Error()+")")
+	} else if o.Settings {
 		done = append(done, "settings back to their defaults"+map[bool]string{true: " (providers kept)", false: ""}[o.KeepProviders])
 	}
 	if o.Caches {
@@ -122,10 +124,20 @@ func (m *Manager) applyReset(o ResetOptions, indexDirs ...string) {
 	m.Log("reset: " + strings.Join(done, "; ") + ". Downloaded files are untouched.")
 }
 
-// isCacheFile: a share index cache's own files (full indexes, file lists, zipped or not, and
-// leftovers of interrupted builds). Only these go: the folder may be one set in Settings.
+// isCacheFile: a share index cache's own files: named after a share's folder id ("<hex>-…"),
+// full indexes, file lists (zipped or not) and the leftovers of interrupted builds of them.
+// Nothing else is ever deleted there: the folder may be one set in Settings.
 func isCacheFile(name string) bool {
-	return strings.Contains(name, ".usnindex") || strings.Contains(name, ".usnlist") || strings.Contains(name, ".tmp")
+	i := strings.IndexByte(name, '-')
+	if i <= 0 {
+		return false
+	}
+	for _, r := range name[:i] {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return strings.Contains(name, ".usnindex") || strings.Contains(name, ".usnlist")
 }
 
 // removeFiles deletes what is in dir (subfolders too when all; else the files keep says),
@@ -164,8 +176,9 @@ func removeFiles(dir string, all bool, keep func(string) bool) (n int, size int6
 	return n, size
 }
 
-// ErrShareInUse: the share's index is open for a download.
-var ErrShareInUse = errors.New("a download is using this share: let it finish (or stop it) first")
+// ErrShareInUse: the share's index is open for something else (a download, a search across
+// shares).
+var ErrShareInUse = errors.New("this build is in use right now (by a download, or a search across builds): try again when that's done")
 
 // ForgetShareFiles deletes what the cache keeps of one share (its index or file list, and
 // its box art): how many files, and their size. The caller closes the share first; a
@@ -174,6 +187,8 @@ func (m *Manager) ForgetShareFiles(folderID string) (int, int64, error) {
 	if folderID == "" || strings.ContainsAny(folderID, `/\.:`) {
 		return 0, 0, errors.New("no such share")
 	}
+	share.CacheMu.Lock() // not while the cache's upkeep or LoadShare is at one of them: list them under it too
+	defer share.CacheMu.Unlock()
 	dir := m.IndexDir()
 	var files []string
 	ents, _ := os.ReadDir(dir)
@@ -182,8 +197,6 @@ func (m *Manager) ForgetShareFiles(folderID string) (int, int64, error) {
 			files = append(files, filepath.Join(dir, e.Name()))
 		}
 	}
-	share.CacheMu.Lock() // not while the cache's upkeep or LoadShare is at one of them
-	defer share.CacheMu.Unlock()
 	for _, p := range files {
 		if m.indexInUse(p) {
 			return 0, 0, ErrShareInUse

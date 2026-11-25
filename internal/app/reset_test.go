@@ -32,7 +32,10 @@ func TestReset(t *testing.T) {
 	}
 	write("index_cache/f00d-1.usnindex")
 	write("index_cache/beef-2.usnlist.gz")
-	write("index_cache/notes.txt") // not the cache's: stays
+	write("index_cache/notes.txt")       // not the cache's: stays
+	write("index_cache/report.tmp.docx") // nor these (the index folder may be one set in Settings)
+	write("index_cache/build.tmp")
+	write("index_cache/f00d-1.usnindex.123-v3.tmp") // an interrupted conversion: the cache's
 	write("art_cache/f00d/a.jpg")
 	write("games/f00d.json.gz")
 	write("games/f00d.bios.json.gz")
@@ -52,12 +55,12 @@ func TestReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { m.Shutdown(time.Second); m.Store.Close() }()
-	for _, gone := range []string{"index_cache/f00d-1.usnindex", "index_cache/beef-2.usnlist.gz", "art_cache/f00d/a.jpg", "games/f00d.json.gz", "games/f00d.bios.json.gz", "reset.json"} {
+	for _, gone := range []string{"index_cache/f00d-1.usnindex", "index_cache/beef-2.usnlist.gz", "art_cache/f00d/a.jpg", "games/f00d.json.gz", "games/f00d.bios.json.gz", "reset.json", "index_cache/f00d-1.usnindex.123-v3.tmp"} {
 		if _, err := os.Stat(filepath.Join(dir, gone)); err == nil {
 			t.Errorf("%s is still there", gone)
 		}
 	}
-	for _, kept := range []string{"index_cache/notes.txt", "my downloads/Some Build/game.zip"} {
+	for _, kept := range []string{"index_cache/notes.txt", "index_cache/report.tmp.docx", "index_cache/build.tmp", "my downloads/Some Build/game.zip"} {
 		if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
 			t.Errorf("%s was deleted", kept)
 		}
@@ -132,5 +135,17 @@ func TestForgetShareFiles(t *testing.T) {
 	m.PinIndex(filepath.Join(dir, "index_cache/beef-2.usnindex"))
 	if _, _, err := m.ForgetShareFiles("beef"); err != ErrShareInUse {
 		t.Errorf("a share in use: %v", err)
+	}
+}
+
+func TestIsCacheFile(t *testing.T) {
+	for name, want := range map[string]bool{
+		"d489088eb3d1d5c696fec58ae7367770-8f57dc981148104f.usnindex": true, "f00d-1.usnlist.gz": true,
+		"f00d-1.usnindex.4412-v3.tmp": true, "f00d-1.usnlist.gz.88.tmp": true,
+		"report.tmp.docx": false, "build.tmp": false, "notes.txt": false, "My-Game.usnindex": false, "-x.usnindex": false,
+	} {
+		if got := isCacheFile(name); got != want {
+			t.Errorf("isCacheFile(%q) = %v, want %v", name, got, want)
+		}
 	}
 }

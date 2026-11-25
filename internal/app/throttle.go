@@ -158,7 +158,9 @@ func (m *Manager) applyThrottle() {
 	}
 	old := m.throttle.Swap(&th)
 	engine.DownloadLimit.SetRate(th.Limit)
-	if old == nil || old.Reason != th.Reason {
+	// the disk guard logs its own pause and resume (checkDisk), and its reason's free space
+	// changes on every check: not a line for each of those
+	if (old == nil || old.Reason != th.Reason) && !th.Disk {
 		if th.Reason == "" {
 			m.Log("downloads: full speed")
 		} else {
@@ -214,8 +216,10 @@ func (m *Manager) checkDisk() {
 	m.mu.Lock()
 	busy := false
 	for _, j := range m.jobs {
-		if runningStates[j.State] || j.State == "queued" {
-			busy = true
+		j.mu.Lock()
+		busy = runningStates[j.State] || j.State == "queued"
+		j.mu.Unlock()
+		if busy {
 			break
 		}
 	}

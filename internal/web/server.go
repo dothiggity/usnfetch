@@ -18,6 +18,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -83,6 +84,8 @@ type session struct {
 	out      func(string)         // the app's log (the System page): every line goes there too
 }
 
+var progressRE = regexp.MustCompile(`\((\d+)%\)`)
+
 // log: what happens with the share, kept with it (for the API) and in the app's log,
 // with the share's name in front. The web app shows its own progress, not these lines.
 func (s *session) log(m string) {
@@ -93,6 +96,9 @@ func (s *session) log(m string) {
 	}
 	title, out := s.Title, s.out
 	s.mu.Unlock()
+	if pm := progressRE.FindStringSubmatch(m); pm != nil && pm[1] != "100" {
+		out = nil // a step of its progress ("shard 12/40 (30%)"): not in the app's log, only the last
+	}
 	if out != nil {
 		if r := []rune(title); len(r) > 48 {
 			title = string(r[:47]) + "…"

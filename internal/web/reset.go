@@ -110,10 +110,21 @@ func (s *Server) resetRoutes() {
 			}
 		}
 		s.smu.Lock()
+		var mine []*session
 		for _, ss := range s.sessions {
 			if lk, err := share.ParseLink(ss.Link); err == nil && lk.FolderID == l.FolderID {
-				s.closeSession(ss)
+				ss.mu.Lock()
+				busy := ss.State == "loading" || ss.Checking || ss.Fetching
+				ss.mu.Unlock()
+				if busy { // its work would bring back what's forgotten, and keep the index open
+					s.smu.Unlock()
+					return nil, fail(409, "this build is still opening, or being checked: try again when that's done", "busy")
+				}
+				mine = append(mine, ss)
 			}
+		}
+		for _, ss := range mine {
+			s.closeSession(ss)
 		}
 		s.smu.Unlock()
 		n, size, err := s.M.ForgetShareFiles(l.FolderID)

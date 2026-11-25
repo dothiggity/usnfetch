@@ -2357,6 +2357,7 @@ async function boot() {
     const notifying = document.hidden && store.get("ui.notify", false) && !SESSION.tray_notify;   // keep listening for finished downloads
     setTimeout(async () => { if (!document.hidden || notifying) await pollStatus(); poll(); }, document.hidden ? 15000 : lastStatus && lastStatus.running > 0 ? 1500 : 3000);
   })();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollStatus(); });   // back to the tab: up to date right away
   await pollStatus(); renderBasket();   // the first status before the first page (it says whether a provider is set up)
   window.addEventListener("storage", (ev) => { if (ev.key === "usnf.basket") { basket.all = store.get("basket", {}); renderBasket(); if (page.onBasket) page.onBasket(); } });
   if (start) location.hash = start;   // its hashchange routes, once

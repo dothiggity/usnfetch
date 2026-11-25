@@ -80,7 +80,9 @@ func cacheFiles(dir string) (fulls, lists, zipped []cacheFile, leftovers []strin
 	for _, e := range ents {
 		n, p := e.Name(), filepath.Join(dir, e.Name())
 		if strings.Contains(n, ".tmp") {
-			leftovers = append(leftovers, p)
+			if isCacheFile(n) { // only the cache's own (the folder may be one set in Settings)
+				leftovers = append(leftovers, p)
+			}
 			continue
 		}
 		info, err := e.Info()

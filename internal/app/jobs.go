@@ -300,12 +300,11 @@ func NewManager(dataDir string, start bool) (*Manager, error) {
 	}
 	m.Settings = s
 	var reset *ResetOptions // asked for in System → Reset: done now, before anything opens the files
+	var resetErr error
 	oldIndexDir := m.IndexDir()
 	if start {
 		if reset = pendingReset(dataDir); reset != nil && reset.Settings {
-			if err := m.resetSettings(reset.KeepProviders); err != nil {
-				m.Log("reset: the settings couldn't be reset: " + err.Error())
-			}
+			resetErr = m.resetSettings(reset.KeepProviders)
 		}
 	}
 	if m.Store, err = OpenStore(filepath.Join(dataDir, "usnfetch.db")); err != nil {
@@ -313,7 +312,7 @@ func NewManager(dataDir string, start bool) (*Manager, error) {
 		return nil, err
 	}
 	if reset != nil {
-		m.applyReset(*reset, oldIndexDir, m.IndexDir())
+		m.applyReset(*reset, resetErr, oldIndexDir, m.IndexDir())
 		_ = os.Remove(resetPath(dataDir))
 	}
 	if err := m.Store.Migrate(dataDir, m.Log); err != nil {
@@ -1043,7 +1042,11 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 	if j.NameAuto && top != "" {
 		j.Name, j.NameAuto = safeName(top), false
 	}
-	j.OutDir = JobOutDir(s, j.Name)
+	// a job carrying on keeps the folder its finished files are in (one from before categories
+	// went is in <download folder>/<category>/<name>); else its folder by its name
+	if j.OutDir == "" || m.Store.DoneDistinct([]string{j.ID}) == 0 {
+		j.OutDir = JobOutDir(s, j.Name)
+	}
 	j.Size = 0
 	for _, f := range chosen {
 		j.Size += f.Size
