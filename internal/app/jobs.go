@@ -277,8 +277,9 @@ type Manager struct {
 	diskLow      atomic.Pointer[diskLow] // downloads paused for lack of space (throttle.go)
 	// Notify shows a notification on this machine (set in tray mode): a download finished or
 	// failed, the disk filled up. warn: the warning style.
-	Notify func(title, body string, warn bool)
-	tidy   tidyRun // upkeep of the index cache (compress.go)
+	Notify  func(title, body string, warn bool)
+	indexed func(link string) // OnIndexed
+	tidy    tidyRun           // upkeep of the index cache (compress.go)
 }
 
 // NewManager opens the data folder (locking it), imports the previous version's files
@@ -423,6 +424,17 @@ func (m *Manager) UnpinIndex(path string) {
 	} else {
 		delete(m.pinned, k)
 	}
+	m.mu.Unlock()
+}
+
+// OnIndexed: f is told when a job is done with its share's index, which is in the cache. The
+// web app works out what's in the share then, so a build that was only downloaded is in
+// Search like a browsed one. f runs on the job's goroutine before the job finishes, after
+// it has closed the index, so no job of that share has it open meanwhile (they run one at
+// a time) and nothing reads it as it changes.
+func (m *Manager) OnIndexed(f func(link string)) {
+	m.mu.Lock()
+	m.indexed = f
 	m.mu.Unlock()
 }
 
@@ -670,10 +682,16 @@ func (m *Manager) Delete(id string, removeFiles bool) bool {
 	return true
 }
 
-func (m *Manager) removeDir(j *Job) {
+// inDownloads: a folder inside the download folder (not the folder itself).
+func (m *Manager) inDownloads(dir string) bool {
 	root, _ := filepath.Abs(m.Settings.CompleteDir)
+	d, _ := filepath.Abs(dir)
+	return strings.HasPrefix(strings.ToLower(d), strings.ToLower(root)+string(os.PathSeparator))
+}
+
+func (m *Manager) removeDir(j *Job) {
 	d, _ := filepath.Abs(j.OutDir)
-	if !strings.HasPrefix(strings.ToLower(d), strings.ToLower(root)+string(os.PathSeparator)) {
+	if !m.inDownloads(d) {
 		m.Log("refusing to delete " + d + ": not under the download folder")
 		return
 	}
@@ -876,6 +894,12 @@ func (m *Manager) run(j *Job) {
 	state, detail := m.download(j, ix, accts)
 	ix.Close()
 	ReleaseMemory() // a big share's index build or file list: give it back now, not over minutes
+	m.mu.Lock()
+	f := m.indexed
+	m.mu.Unlock()
+	if f != nil && !j.deleted && !m.shuttingDown.Load() {
+		f(j.Link) // what's in the share, for Search (OnIndexed): before the next job of it can start
+	}
 	if state == "completed" {
 		m.dropIndex(j)
 	}
@@ -1091,15 +1115,22 @@ func (m *Manager) download(j *Job, ix *share.Index, accts *engine.AccountSet) (s
 			m.Log(fmt.Sprintf("%s: %d file(s), %.2f GB already on disk, not downloaded again", j.Label(), n, float64(bytes)/1e9))
 		}
 	}
-	// outputs are sparse, so a full disk would otherwise only show up mid-download
+	// outputs are sparse, so a full disk would otherwise only show up mid-download. With Keep
+	// free on, the disk guard pauses downloads before the disk fills and carries on once
+	// there's room (throttle.go), so the job starts and waits like the rest; with it off,
+	// it fails now instead of when the disk is full.
 	var need int64
 	for _, f := range chosen {
 		if !m.Store.IsDone(j.ID, f.Path) {
 			need += f.Size
 		}
 	}
-	if free, err := DiskFree(j.OutDir); err == nil && need > free {
-		msg := fmt.Sprintf("needs %.2f GiB, only %.2f GiB free in %s", float64(need)/(1<<30), float64(free)/(1<<30), j.OutDir)
+	guarded := m.Settings.MinFreeGB > 0 && m.inDownloads(j.OutDir) // the guard watches the download folder's drive
+	if free, err := DiskFree(j.OutDir); err == nil && need > free && guarded {
+		m.Log(fmt.Sprintf("%s: needs %.2f GiB, %.2f GiB free in %s: downloads pause when %d GB is left, and carry on once there's room",
+			j.Label(), float64(need)/(1<<30), float64(free)/(1<<30), j.OutDir, m.Settings.MinFreeGB))
+	} else if err == nil && need > free {
+		msg := fmt.Sprintf("needs %.2f GiB, only %.2f GiB free in %s (Keep free is off, so it can't wait for room)", float64(need)/(1<<30), float64(free)/(1<<30), j.OutDir)
 		partial := false
 		_ = filepath.WalkDir(j.OutDir, func(p string, d os.DirEntry, err error) error {
 			if err == nil && strings.HasSuffix(p, ".usnfetch") {

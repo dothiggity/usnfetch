@@ -65,8 +65,10 @@ opens like the first time. System → Reset does that for everything you tick, u
 the first-run setup. Neither touches your downloaded files.
 
 **Using it from another machine.** Set a web password first (Settings → Web access, or `usnfetch
-set-password`), start it with `--host 0.0.0.0`, and browse to `http://<that machine>:7979/`. On
-Linux, a systemd unit along these lines runs it as a service:
+set-password`), start it with `--host 0.0.0.0`, and browse to `http://<that machine>:7979/`.
+Without a password it only answers on its own computer, and only to `localhost`, an IP address or
+the computer's name, so other websites can't reach it. On Linux, a systemd unit along these lines
+runs it as a service:
 
     [Service]
     User=usnfetch

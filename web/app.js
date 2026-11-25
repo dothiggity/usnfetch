@@ -71,6 +71,8 @@ function ago(t) {
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`; return new Date(t * 1000).toLocaleDateString();
 }
 const pct = (a, b) => (b ? Math.min(100, (100 * a) / b) : 0);
+// webLink: a link from an imported list is followed only when it's a web page (http or https)
+const webLink = (u) => typeof u === "string" && /^https?:\/\/[^\s]+$/i.test(u.trim());
 
 async function api(path, opts = {}) {
   const o = { method: opts.method || (opts.body !== undefined ? "POST" : "GET"), headers: {}, credentials: "same-origin", signal: opts.signal };
@@ -516,6 +518,18 @@ function openLinkDialog() {
     } }] });
 }
 
+// spaceNote: what happens when a download is bigger than the free space. With Keep free on,
+// downloads pause before the drive fills and carry on once there's room; with it off, the
+// job fails when it starts. listed: the size is only the list's (real one unknown yet).
+function spaceNote(need, plan, listed) {
+  const keep = plan.min_free_gb || 0, more = fmtBytes(need - plan.free);
+  const by = listed ? "By the sizes in your list, that's" : "That's";
+  return keep > 0
+    ? h("div", { class: "note warn" }, `${by} ${more} more than the ${fmtBytes(plan.free)} free in ${plan.complete_dir}. It starts anyway: downloads pause when ${keep} GB is left and carry on once you make room.` +
+        (listed ? " Each share's real size shows once it's opened or starts." : ""))
+    : h("div", { class: "note bad" }, `${by} ${more} more than the ${fmtBytes(plan.free)} free in ${plan.complete_dir}. With Keep free off (Settings → Downloads), the job fails when it starts unless space is freed first.`);
+}
+
 // reviewShares: the review of whole shares (from the catalog, or pasted links), before they are
 // queued: sizes against free space, folders, archives, files already there.
 // src: { ids } (catalog entries) or { links }.
@@ -551,8 +565,8 @@ async function reviewShares(src, done) {
       h("div", {}, h("div", { class: "k" }, "Shares"), h("div", { class: "v" }, ok.length.toLocaleString())),
       h("div", {}, h("div", { class: "k" }, "Size"), h("div", { class: "v" }, fmtBytes(size) + (unknown ? " +" : "")),
         unknown ? h("div", { class: "faint small" }, `${unknown} not opened yet: their size shows once they start`) : null),
-      h("div", {}, h("div", { class: "k" }, "Free space"), h("div", { class: "v" + (over ? " bad" : "") }, plan.free != null ? fmtBytes(plan.free) : "—"))),
-    over ? h("div", { class: "note bad" }, `Not enough space: ${fmtBytes(size - plan.free)} more is needed in ${plan.complete_dir}. A job fails when it starts unless space is freed first.`) : null,
+      h("div", {}, h("div", { class: "k" }, "Free space"), h("div", { class: "v" + (over ? " warn" : "") }, plan.free != null ? fmtBytes(plan.free) : "—"))),
+    over ? spaceNote(size, plan, ok.some((it) => it.size_listed)) : null,
     h("div", {}, h("div", { class: "k2" }, "Files go to"), list),
     h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · counted when each download starts")),
       choice("xmode", mode, [["off", "Don't extract", "Keep every file exactly as it was shared."],
@@ -562,7 +576,7 @@ async function reviewShares(src, done) {
       choice("xexist", existing, [["skip", "Skip them", "A file with the same name and size counts as done."],
         ["verify", "Check them first", "Compare each one's SHA-256 with the share and download only what differs."],
         ["redownload", "Download everything again", "Overwrite what is there."]], (v) => { existing = v; })) : null,
-  ], actions: !ok.length ? [{ label: "Close" }] : [{ label: "Cancel" }, { label: over ? "Queue anyway" : ok.length === 1 ? "Queue download" : `Queue ${ok.length} downloads`, kind: "primary", run: async () => {
+  ], actions: !ok.length ? [{ label: "Close" }] : [{ label: "Cancel" }, { label: over && !plan.min_free_gb ? "Queue anyway" : ok.length === 1 ? "Queue download" : `Queue ${ok.length} downloads`, kind: "primary", run: async () => {
     const body = { extract: mode, existing };
     const r = src.ids ? await api("/catalog/download", { body: { ...body, ids: ok.map((it) => it.id) } }) : await api("/jobs", { body: { ...body, text: ok.map((it) => it.link).join("\n") } });
     toast(`Queued ${r.jobs.length} download${r.jobs.length === 1 ? "" : "s"}` + (r.errors.length ? ` · ${r.errors.length} not queued: ${r.errors[0]}` : ""), r.errors.length ? "" : "ok",
@@ -769,7 +783,7 @@ async function pageCatalog() {
             launchers(e).map((t) => tagChip("launcher", t)), devices(e).map((t) => tagChip("device", t)),
             e.source ? h("span", { class: "chip plain" }, e.source) : null,
             e.sku ? h("span", { class: "faint mono" }, e.sku) : null,
-            e.info ? h("a", { href: e.info, target: "_blank", rel: "noopener", title: e.info }, icon("ext")) : null),
+            webLink(e.info) ? h("a", { href: e.info, target: "_blank", rel: "noopener noreferrer", title: e.info }, icon("ext")) : null),
           insideLine(e.inside)),
         h("td", { class: "right nowrap" }, sizeCell(e)),
         h("td", {}, openedCell(e)),
@@ -1113,11 +1127,21 @@ async function reviewDownload(s, sel, done, more = {}) {
     h("div", {}, h("div", { class: "cl" }, label), h("div", { class: "ch" }, help)))));
   let haveTimer = null, haveSeq = 0, allThere = false, queueBtn = null;
   const nothingNote = h("div", { class: "note ok-note hidden" });
-  const over = plan.free != null && plan.size > plan.free;
+  // space: the size against free space, less what's already on disk once that's counted
+  let haveBytes = 0, over = false;
+  const spaceBox = h("div"), freeV = h("div", { class: "v" }, plan.free != null ? fmtBytes(plan.free) : "—");
+  const showSpace = () => {
+    const need = plan.size - (existing === "skip" ? haveBytes : 0);
+    over = plan.free != null && need > plan.free;
+    put(spaceBox, over ? spaceNote(need, plan, false) : null);
+    freeV.className = "v" + (over ? " warn" : "");
+  };
+  showSpace();
   function showQueue() {   // everything already there and skipped: nothing to queue
     const nothing = allThere && existing === "skip";
     nothingNote.classList.toggle("hidden", !nothing);
-    if (queueBtn) { queueBtn.disabled = nothing; queueBtn.textContent = nothing ? "Nothing to download" : over ? "Queue anyway" : "Queue download"; }
+    showSpace();
+    if (queueBtn) { queueBtn.disabled = nothing; queueBtn.textContent = nothing ? "Nothing to download" : over && !plan.min_free_gb ? "Queue anyway" : "Queue download"; }
   }
   for (const r of haveChoices.querySelectorAll("input")) r.addEventListener("change", showQueue);
   async function countHave() {
@@ -1127,10 +1151,10 @@ async function reviewDownload(s, sel, done, more = {}) {
     try { r = await api(`/shares/${s.id}/ondisk`, { body: { ...(sel || {}), name: name.value.trim() } }); }
     catch (e) { haveLine.textContent = ""; return; }
     if (seq !== haveSeq) return;
-    allThere = false;
+    allThere = false; haveBytes = 0;
     if (!r.counted) { haveLine.textContent = " · not counted for a selection this large"; haveChoices.classList.remove("hidden"); showQueue(); return; }
     const any = r.files > 0 || r.partial > 0;
-    allThere = r.of > 0 && r.files >= r.of && !r.partial;
+    allThere = r.of > 0 && r.files >= r.of && !r.partial; haveBytes = r.bytes || 0;
     nothingNote.textContent = `Nothing to download: all ${r.of.toLocaleString()} file${r.of === 1 ? " is" : "s are"} already in ${r.dir}. To check or replace them, pick an option above.`;
     haveChoices.classList.toggle("hidden", !any);
     haveLine.textContent = !any ? " · none of these files are there yet"
@@ -1162,9 +1186,9 @@ async function reviewDownload(s, sel, done, more = {}) {
     h("div", { class: "facts" },
       h("div", {}, h("div", { class: "k" }, "Files"), h("div", { class: "v" }, plan.files.toLocaleString())),
       h("div", {}, h("div", { class: "k" }, "Size"), h("div", { class: "v" }, fmtBytes(plan.size))),
-      h("div", {}, h("div", { class: "k" }, "Free space"), h("div", { class: "v" + (over ? " bad" : "") }, plan.free != null ? fmtBytes(plan.free) : "—"))),
+      h("div", {}, h("div", { class: "k" }, "Free space"), freeV)),
     pickedList,
-    over ? h("div", { class: "note bad" }, `Not enough space: ${fmtBytes(plan.size - plan.free)} more is needed in ${plan.complete_dir}. The job fails when it starts unless space is freed first.`) : null,
+    spaceBox,
     h("div", { class: "form tight" }, h("label", { class: "k" }, "Folder"), name),
     h("div", {}, h("div", { class: "k2" }, "Files go to"), dest),
     found.length ? h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · this selection has " + found.join(", "))), choices,
@@ -1172,7 +1196,7 @@ async function reviewDownload(s, sel, done, more = {}) {
     h("div", {}, h("div", { class: "k2" }, "Files already there", haveLine), haveChoices),
     nothingNote,
     plan.active_jobs && plan.active_jobs.length ? h("div", { class: "note" }, `Another download from this share is ${plan.active_jobs[0].state}: this one starts when it finishes.`) : null,
-  ], actions: [{ label: "Cancel" }, { label: over ? "Queue anyway" : "Queue download", kind: "primary", ref: (b) => { queueBtn = b; }, run: async () => {
+  ], actions: [{ label: "Cancel" }, { label: over && !plan.min_free_gb ? "Queue anyway" : "Queue download", kind: "primary", ref: (b) => { queueBtn = b; }, run: async () => {
     const r = await api(`/shares/${s.id}/download`, { body: { ...(sel || {}), name: name.value.trim(), extract: mode, existing, label: more.label } });
     toast(`Queued ${r.files.toLocaleString()} file${r.files === 1 ? "" : "s"} · ${fmtBytes(r.size)}`, "ok", { label: "View in Activity", href: "#/activity" });
     if (done) done(r);
@@ -1829,6 +1853,9 @@ function providerDialog(a, onSave) {
   const [ssl, sslSw] = sw(a.ssl), [en, enSw] = sw(a.enabled);
   ssl.addEventListener("change", () => { if (+f.port.value === 563 || +f.port.value === 119) f.port.value = ssl.checked ? 563 : 119; });
   const result = h("div", { class: "muted" });
+  // a saved password stays with its server: a new server name needs it typed again
+  const moved = () => !isNew && a.has_password && f.server.value.trim().toLowerCase() !== (a.server || "").toLowerCase();
+  f.server.addEventListener("input", () => { f.password.placeholder = !a.has_password ? "" : moved() ? "type it again for the new server" : "unchanged"; });
   const collect = () => ({ ...a, name: f.name.value.trim(), server: f.server.value.trim(), port: +f.port.value || 563, username: f.username.value.trim(),
     password: f.password.value, connections: +f.connections.value || 1, ssl: ssl.checked, enabled: en.checked, priority: Math.max(0, +f.priority.value || 0) });
   // the first provider needs only the basics; priority, name and on/off are there for more
@@ -1839,12 +1866,14 @@ function providerDialog(a, onSave) {
     field("Username", f.username), field("Password", f.password), field("Connections", f.connections, "As many as your plan allows (Easynews: 60). usnfetch never opens more than this at once, across every download, preview and check: downloads use them all and hand a few back while you preview or check something."),
     more, h("div", { class: "full" }, result)),
   actions: [{ label: "Test connection", run: async () => {
+    if (moved() && !f.password.value) { result.textContent = "Type the password again: a saved password is never sent to a different server."; result.className = "note bad"; f.password.focus(); return false; }
     result.textContent = "connecting…"; result.className = "muted";
     const r = await api("/settings/test-account", { body: collect() }).catch((e) => ({ ok: false, message: e.message }));
     result.textContent = testMsg(r); result.className = r.ok ? "note ok-note" : "note bad"; return false;
   } }, { label: "Cancel" }, { label: isNew ? "Add" : "Save", kind: "primary", run: async () => {
     const p = collect();
     if (!p.server) { result.textContent = "Enter the server name."; result.className = "note bad"; return false; }
+    if (moved() && !p.password) { result.textContent = "Type the password again: a saved password is never sent to a different server."; result.className = "note bad"; f.password.focus(); return false; }
     await onSave(p, isNew);
   } }] });
 }
@@ -2108,7 +2137,9 @@ async function pageSettings() {
     min_free_gb: h("input", { class: "input", type: "number", min: 0, max: 10000, value: s.min_free_gb ?? 5, style: { width: "110px" } }),
     index_cache_gb: h("input", { class: "input", type: "number", min: 0, max: 10000, value: s.index_cache_gb ?? 20, style: { width: "110px" } }),
     index_dir: h("input", { class: "input", value: s.index_dir || "", placeholder: "empty: index_cache in the data folder" }),
-    sevenzip_path: h("input", { class: "input", value: s.sevenzip_path || "", placeholder: "empty: found by itself" }), unrar_path: h("input", { class: "input", value: s.unrar_path || "", placeholder: "empty: found by itself" }) };
+    // they pick a program to run, so only the machine running usnfetch can change them
+    sevenzip_path: h("input", { class: "input", value: s.sevenzip_path || "", placeholder: "empty: found by itself", disabled: !SESSION.local, title: SESSION.local ? null : "Only on the machine running usnfetch" }),
+    unrar_path: h("input", { class: "input", value: s.unrar_path || "", placeholder: "empty: found by itself", disabled: !SESSION.local, title: SESSION.local ? null : "Only on the machine running usnfetch" }) };
   const sws = { verify: sw(s.verify), extract: sw(s.extract), delete_archives: sw(s.delete_archives), extract_standalone: sw(s.extract_standalone), notify: sw(s.notify) };
   const toolLine = () => h("div", { class: "help tool" });
   const tools = { sevenzip_path: toolLine(), unrar_path: toolLine() };
@@ -2294,7 +2325,7 @@ async function resetDialog() {
   const n = (x, one, many) => `${x.toLocaleString()} ${x === 1 ? one : many}`;
   const opts = [
     ["caches", true, "Caches", `Share indexes, box art, game and BIOS search lists: ${n(r.caches.indexes, "index", "indexes")}, ${n(r.caches.art, "picture", "pictures")}, ${fmtBytes(r.caches.bytes)}. Each build's index is fetched again the first time you open it.`],
-    ["opened", true, "What opening shares learned", `For the ${n(r.opened, "share", "shares")} you've opened: when, the details and what's inside. The catalog looks never-opened.`],
+    ["opened", true, "What opening shares learned", `For the ${n(r.opened, "share", "shares")} you've opened or downloaded: when, the details and what's inside. The catalog looks never-opened.`],
     ["health", false, "Health checks", `Link OK / Gone and availability, for ${n(r.health, "share", "shares")}. They're checked again as shares are opened.`],
     ["catalog", false, "The catalog", `The ${n(r.catalog, "link", "links")} in it. Import your list again afterwards.`],
     ["jobs", false, "Download queue and history", `${n(r.jobs, "download", "downloads")}. The downloaded files stay where they are.`],

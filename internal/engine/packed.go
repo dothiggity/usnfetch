@@ -33,7 +33,12 @@ import (
 
 const packVersion = 3
 
-var zstdDec, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+// maxUnframed: the most a packed segment, or a file in one, may unpack to. Segments are an
+// article of at most a few MB holding files under 500 KB, so this is far past anything real;
+// it stops a hostile share's tiny article unpacking to gigabytes in memory.
+const maxUnframed = 64 << 20
+
+var zstdDec, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0), zstd.WithDecoderMaxMemory(maxUnframed))
 
 // Unframe: a gzip / zstd frame -> its content; anything else unchanged (the publisher's rule).
 func Unframe(data []byte) ([]byte, error) {
@@ -44,7 +49,11 @@ func Unframe(data []byte) ([]byte, error) {
 			return nil, err
 		}
 		defer r.Close()
-		return io.ReadAll(r)
+		b, err := io.ReadAll(io.LimitReader(r, maxUnframed+1))
+		if err == nil && len(b) > maxUnframed {
+			err = fmt.Errorf("a packed segment unpacks to more than %d MB", maxUnframed>>20)
+		}
+		return b, err
 	case bytes.HasPrefix(data, []byte{0x28, 0xb5, 0x2f, 0xfd}):
 		return zstdDec.DecodeAll(data, nil)
 	}

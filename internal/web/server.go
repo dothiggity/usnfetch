@@ -63,6 +63,7 @@ type Server struct {
 	lc        linkChecks         // link checks of catalog entries
 	games     listCache[gameSet] // game lists for the game search (games.go)
 	bios      listCache[biosSet] // BIOS lists for the BIOS search (bios.go)
+	insideMu  sync.Mutex         // one share's contents worked out at a time (inside.go)
 }
 
 type session struct {
@@ -117,6 +118,7 @@ func New(version string, m *app.Manager, cat *app.Catalog, static fs.FS, devDir 
 		_ = m.SaveSettings()
 	}
 	s.routes()
+	m.OnIndexed(s.indexed) // a download's share gets its game list too (inside.go)
 	go s.janitor()
 	go func() { // links nothing is known about yet get the link check, a moment after startup
 		time.Sleep(10 * time.Second)
@@ -280,6 +282,15 @@ func (s *Server) setCookie(w http.ResponseWriter) {
 // ServeHTTP: auth guard, then the routes.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
+	pageHeaders(w.Header(), strings.HasPrefix(p, "/api/"))
+	if e := s.guard(r); e != nil { // guard.go
+		if strings.HasPrefix(p, "/api/") {
+			writeErr(w, e)
+		} else {
+			http.Error(w, e.msg, e.status)
+		}
+		return
+	}
 	if strings.HasPrefix(p, "/api/") && p != "/api/session" && p != "/api/login" {
 		if s.M.Settings.Web.PasswordHash != "" {
 			if !s.sessionOK(r) {
@@ -354,7 +365,7 @@ func needsCheck(info map[string]any) bool {
 }
 
 func (s *Server) openShare(link, title, password string) (*session, error) {
-	link = strings.TrimSpace(link)
+	link = s.sameShare(strings.TrimSpace(link), nil) // the link already known for this share (samelink.go)
 	if _, err := share.ParseLink(link); err != nil {
 		return nil, fail(400, err.Error(), "bad_link")
 	}
@@ -676,6 +687,10 @@ func (s *Server) routes() {
 		if len(entries) == 0 {
 			return nil, fail(400, "no usn:// links found in that text", "no_links")
 		}
+		same := s.sameAs() // a share already known under another spelling of its link stays one entry (samelink.go)
+		for i := range entries {
+			entries[i].Link = same(entries[i].Link)
+		}
 		for i := range entries { // the import's name is the source of links no SOURCE: line names
 			if entries[i].Source == "" {
 				if _, known := s.Cat.ByLink(entries[i].Link); !known {
@@ -875,6 +890,7 @@ func (s *Server) routes() {
 	s.api("GET /api/settings", func(w http.ResponseWriter, r *http.Request) (any, error) { return s.settingsView(), nil })
 	s.api("PUT /api/settings", s.settingsPut)
 	s.api("POST /api/settings/test-account", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		// a saved password is only filled in for the server it was saved for (MergeAccounts)
 		accts := s.M.MergeAccounts([]map[string]any{body(r)})
 		if len(accts) == 0 {
 			return nil, fail(400, "server is required", "")
@@ -1345,7 +1361,7 @@ func (s *Server) sharePlan(w http.ResponseWriter, r *http.Request) (any, error) 
 	}
 	return map[string]any{"files": sel.count, "size": sel.size, "free": free, "complete_dir": st.CompleteDir, "sep": string(os.PathSeparator),
 		"name": name, "name_auto": nameAuto, "out_dir": outDir, "example": example, "top": top,
-		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives, "archives": arc, "single_examples": singles,
+		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives, "min_free_gb": st.MinFreeGB, "archives": arc, "single_examples": singles,
 		"active_jobs": active}, nil
 }
 
@@ -1425,12 +1441,13 @@ func (s *Server) shareFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fail(404, "no such file in this share", ""))
 		return
 	}
+	name := path.Base(strings.ReplaceAll(fe.Path, "\\", "/"))
+	ct := fileType(name, r) // guard.go: nothing from a share runs as a page here
+	sandboxFile(w.Header(), ct)
+	w.Header().Set("Vary", "Sec-Fetch-Dest") // an SVG is a picture in an <img>, text in a tab
 	if isImage(fe.Path) && fe.Size <= artMaxFile && r.URL.Query().Get("download") != "1" {
-		ct := mime.TypeByExtension(strings.ToLower(path.Ext(fe.Path)))
-		if ct != "" {
-			w.Header().Set("Content-Type", ct)
-		}
-		if s.serveArt(w, r, ix, *fe, path.Base(strings.ReplaceAll(fe.Path, "\\", "/"))) {
+		w.Header().Set("Content-Type", ct)
+		if s.serveArt(w, r, ix, *fe, name) {
 			return
 		}
 	}
@@ -1475,14 +1492,9 @@ func (s *Server) shareFile(w http.ResponseWriter, r *http.Request) {
 			status = 206
 		}
 	}
-	name := path.Base(strings.ReplaceAll(fe.Path, "\\", "/"))
 	disp := "inline"
 	if r.URL.Query().Get("download") == "1" {
-		disp = "attachment"
-	}
-	ct := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
-	if ct == "" {
-		ct = "application/octet-stream"
+		disp, ct = "attachment", "application/octet-stream" // saved as it is, under its own name
 	}
 	h := w.Header()
 	h.Set("Content-Type", ct)
@@ -1530,6 +1542,21 @@ func (s *Server) settingsView() map[string]any {
 func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error) {
 	b := body(r)
 	st := s.M.Settings
+	// the 7-Zip and UnRAR paths pick a program to run: only on this machine, only those (guard.go)
+	for k, cur := range map[string]string{"sevenzip_path": st.SevenZipPath, "unrar_path": st.UnrarPath} {
+		v, ok := b[k]
+		if p := strings.TrimSpace(str(v)); !ok || p == cur {
+			continue
+		} else if !isLoopback(r) {
+			return nil, fail(403, "the 7-Zip and UnRAR paths can only be changed on the machine running usnfetch", "tool_remote")
+		} else if p != "" && !toolOK(k, p) {
+			what := "7-Zip (7z, 7za or 7zz)"
+			if k == "unrar_path" {
+				what = "UnRAR (unrar or rar)"
+			}
+			return nil, fail(400, "that doesn't look like "+what+": give the path of the program itself", "bad_tool")
+		}
+	}
 	getStr := func(k string, dst *string) {
 		if v, ok := b[k]; ok {
 			*dst = strings.TrimSpace(str(v))

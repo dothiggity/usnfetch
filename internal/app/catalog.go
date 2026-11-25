@@ -326,7 +326,8 @@ func ImportSabServers(path string) ([]AccountSetting, error) {
 }
 
 // MergeAccounts applies account edits from the API: an empty password keeps the stored
-// one, clear_password removes it; numbers are clamped.
+// one while the server stays the same (a saved password never goes to another server),
+// clear_password removes it; numbers are clamped.
 func (m *Manager) MergeAccounts(incoming []map[string]any) []AccountSetting {
 	old := map[string]AccountSetting{}
 	for _, a := range m.Settings.Accounts {
@@ -371,7 +372,7 @@ func (m *Manager) MergeAccounts(incoming []map[string]any) []AccountSetting {
 			a.Password = ""
 		case pw != "":
 			a.Password = pw
-		default:
+		case strings.EqualFold(a.Server, prev.Server):
 			a.Password = prev.Password
 		}
 		if a.ID == "" {

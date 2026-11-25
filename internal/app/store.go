@@ -276,6 +276,23 @@ func (s *Store) AllShareInfo() map[string]map[string]any {
 	return out
 }
 
+// ShareLinks: the links of every share with saved details.
+func (s *Store) ShareLinks() []string {
+	var out []string
+	rows, err := s.db.Query("SELECT link FROM shareinfo")
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var link string
+		if rows.Scan(&link) == nil {
+			out = append(out, link)
+		}
+	}
+	return out
+}
+
 func (s *Store) SetShareInfo(link string, m map[string]any) error {
 	b, err := json.Marshal(m)
 	if err != nil {

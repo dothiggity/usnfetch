@@ -102,6 +102,35 @@ func DecodeLink(link string) (string, error) {
 	return "", fmt.Errorf("this usn:// link uses an unknown encoding (version %d): check that it was copied in full", data[0])
 }
 
+// LinkKey: what tells shares apart, their manifest article and folder ID. Links with the
+// same key are one share written differently: usenet:// for usn://, or cut short after the
+// folder ID, as forum line-wraps do. "" when the link doesn't get that far.
+func LinkKey(link string) string {
+	link = strings.TrimSpace(link)
+	canonical, err := DecodeLink(link)
+	if t := strings.TrimRight(link, "="); err != nil && strings.HasPrefix(t, "usn://") && len(t[6:])%4 == 1 {
+		canonical, err = DecodeLink(t[:len(t)-1]) // cut at a length base64 can't have: drop the odd character
+	}
+	if err != nil {
+		return ""
+	}
+	body, _, _ := strings.Cut(canonical[len("usenet://"):], "#")
+	var segs []string
+	for _, s := range strings.Split(body, "/") {
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	if len(segs) > 0 && !strings.Contains(segs[0], "@") {
+		segs = segs[1:] // the newsgroup
+	}
+	if len(segs) < 2 {
+		return ""
+	}
+	first, _, _ := strings.Cut(segs[0], "+")
+	return strings.Trim(strings.TrimSpace(first), "<>") + "/" + strings.ToLower(segs[1])
+}
+
 // ParseLink parses usn:// and usenet:// share links.
 func ParseLink(link string) (*Link, error) {
 	canonical, err := DecodeLink(link)

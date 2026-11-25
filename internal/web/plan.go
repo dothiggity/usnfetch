@@ -30,8 +30,9 @@ type badLine struct {
 var linkSep = regexp.MustCompile(`[\s,;"'<>()\[\]]+`)
 
 // linkLines finds the share links in pasted text: the usable ones, in order and once
-// each, and the lines with a link that is not, with the reason.
-func linkLines(text string) ([]string, []badLine) {
+// each, and the lines with a link that is not, with the reason. same (if not nil) swaps a
+// link for the one usnfetch already has for that share (sameShare), cut-off ones included.
+func linkLines(text string, same func(string) string) ([]string, []badLine) {
 	var links []string
 	bad := []badLine{}
 	seen := map[string]bool{}
@@ -40,6 +41,9 @@ func linkLines(text string) ([]string, []badLine) {
 			low := strings.ToLower(tok)
 			if !strings.HasPrefix(low, "usn:") && !strings.HasPrefix(low, "usenet:") {
 				continue
+			}
+			if same != nil {
+				tok = same(tok)
 			}
 			if _, err := share.ParseLink(tok); err != nil {
 				bad = append(bad, badLine{Line: i + 1, Text: shorten(strings.TrimSpace(line), 90), Reason: err.Error()})
@@ -151,7 +155,7 @@ func (s *Server) planShares(links []string) map[string]any {
 	}
 	return map[string]any{"items": items, "size": total, "unknown": unknown, "gone": gone, "free": free, "complete_dir": st.CompleteDir,
 		"sep":             string(os.PathSeparator),
-		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives}
+		"extract_default": st.DefaultExtractMode(), "delete_archives": st.DeleteArchives, "min_free_gb": st.MinFreeGB}
 }
 
 // queueShares queues whole shares with the choices made in their review.
@@ -222,7 +226,7 @@ func (s *Server) planRoutes() {
 	// pasted links: which are usable (and why the others are not), then the review
 	s.api("POST /api/jobs/plan", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		b := body(r)
-		links, bad := linkLines(str(b["text"]))
+		links, bad := linkLines(str(b["text"]), s.sameAs())
 		if len(links) == 0 && len(bad) == 0 {
 			return nil, fail(400, "no usn:// links in that text", "no_links")
 		}
@@ -232,7 +236,7 @@ func (s *Server) planRoutes() {
 	})
 	s.api("POST /api/jobs", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		b := body(r)
-		links, badLines := linkLines(str(b["text"]))
+		links, badLines := linkLines(str(b["text"]), s.sameAs())
 		if len(links) == 0 && len(badLines) == 0 {
 			return nil, fail(400, "no usn:// links in that text", "no_links")
 		}

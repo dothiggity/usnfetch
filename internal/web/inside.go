@@ -80,39 +80,96 @@ func (s *Server) cachedShares() []cachedShare {
 			add(link, name, "")
 		}
 	}
+	for _, j := range append(s.M.Queue(), s.M.History()...) { // shares downloaded without being browsed
+		add(j.Link, j.Name, "")
+	}
 	return out
 }
 
 // fillInside works out what's inside each cached share that doesn't have it yet (shares
-// opened before this existed), one at a time, in the background.
+// opened or downloaded before this existed), one at a time, in the background.
 func (s *Server) fillInside() {
 	n := 0
 	for _, c := range s.cachedShares() {
-		info := s.M.Store.ShareInfo(c.link)
-		if info == nil || num(info["inside_v"], 0) >= insideVersion {
+		if info := s.M.Store.ShareInfo(c.link); info != nil && num(info["inside_v"], 0) >= insideVersion {
 			continue
 		}
-		ix, err := openCached(c.file)
-		if err != nil {
-			continue
+		if s.insideOf(c.link) {
+			n++
 		}
-		if ix.EnsureTree(nil) == nil {
-			if info = s.M.Store.ShareInfo(c.link); info != nil {
-				if l, err := share.ParseLink(c.link); err == nil {
-					info["folder_id"] = l.FolderID
-				}
-				s.saveInside(ix, info)
-				_ = s.M.Store.SetShareInfo(c.link, info)
-				n++
-			}
-		}
-		ix.Close()
 		time.Sleep(200 * time.Millisecond)
 	}
 	if n > 0 {
-		s.M.Log(fmt.Sprintf("worked out what's inside %d share(s) opened before", n))
+		s.M.Log(fmt.Sprintf("worked out what's inside %d share(s) opened or downloaded before", n))
 		s.M.TidyIndexCache() // file lists unzipped for this go back to being zipped
 	}
+}
+
+// indexed is told by the app (Manager.OnIndexed) when a download is done with the share's
+// index: what's inside the share is worked out now, unless it's known already. It runs on
+// the job's goroutine, so no other job of the share opens the index meanwhile.
+func (s *Server) indexed(link string) {
+	if info := s.M.Store.ShareInfo(link); info != nil && num(info["inside_v"], 0) >= insideVersion {
+		return
+	}
+	s.insideOf(link)
+}
+
+// insideOf works out what's inside a share from its index in the cache (its systems, game
+// list and BIOS files: saveInside) and keeps it with the share's details, starting those if
+// the share was never opened. false if it has no index in the cache or it can't be read.
+func (s *Server) insideOf(link string) bool {
+	s.insideMu.Lock()
+	defer s.insideMu.Unlock()
+	l, err := share.ParseLink(link)
+	if err != nil {
+		return false
+	}
+	info := s.M.Store.ShareInfo(link)
+	if info != nil && num(info["inside_v"], 0) >= insideVersion {
+		return false // done meanwhile
+	}
+	if info == nil { // details kept under another spelling of the share's link: those
+		for _, other := range s.M.Store.ShareLinks() {
+			if ol, err := share.ParseLink(other); err == nil && ol.FolderID == l.FolderID && other != link {
+				if link, info = other, s.M.Store.ShareInfo(other); info != nil && num(info["inside_v"], 0) >= insideVersion {
+					return false
+				}
+				break
+			}
+		}
+	}
+	f := s.cachedIndex(l.FolderID)
+	if f == "" {
+		return false
+	}
+	// building its folder tree writes to the index file, so not while anything has it open (a
+	// download reads it as a file that never changes; a share being browsed works it out itself)
+	share.CacheMu.Lock()
+	busy := share.InUse(f) || share.InUse(strings.TrimSuffix(f, share.GzExt))
+	share.CacheMu.Unlock()
+	if busy {
+		return false
+	}
+	ix, err := openCached(f)
+	if err != nil {
+		return false
+	}
+	defer ix.Close()
+	if ix.EnsureTree(nil) != nil {
+		return false
+	}
+	if info = s.M.Store.ShareInfo(link); info == nil { // downloaded, never browsed
+		info = map[string]any{}
+		if sum, err := ix.Summary(); err == nil && sum.Name != "" {
+			info["name"], info["size"], info["files"], info["packed"] = sum.Name, sum.Size, sum.Files, sum.Packed
+		}
+	}
+	info["folder_id"] = l.FolderID
+	s.saveInside(ix, info)
+	err = s.M.Store.SetShareInfo(link, info)
+	app.ReleaseMemory() // its folder tree can be big: give it back now
+	return err == nil
 }
 
 // ---- search across every opened share -------------------------------------------------

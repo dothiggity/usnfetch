@@ -131,13 +131,21 @@ func (p *connPool) fetchWhole(parts []any) ([]byte, error) {
 	return out, nil
 }
 
+// Limits on what a share's index may unpack to, so a hostile share can't fill the memory.
+// They match the official client: zstd's default 128 MB window (it reads with libzstd's
+// defaults), and 1 GB for a piece read whole (its cap on the shard list).
+const (
+	maxZstdWindow = 1 << 27
+	maxPlain      = 1 << 30
+)
+
 // decompress picks gzip, zstd, xz or plain by magic bytes.
 func decompress(r io.Reader) (io.Reader, func(), error) {
 	br := bufio.NewReaderSize(r, 1<<20)
 	head, _ := br.Peek(6)
 	switch {
 	case bytes.HasPrefix(head, []byte{0x28, 0xb5, 0x2f, 0xfd}):
-		z, err := zstd.NewReader(br, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(1<<31))
+		z, err := zstd.NewReader(br, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(maxZstdWindow))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -161,7 +169,11 @@ func decompressAll(b []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer done()
-	return io.ReadAll(r)
+	b, err = io.ReadAll(io.LimitReader(r, maxPlain+1))
+	if err == nil && len(b) > maxPlain {
+		err = fmt.Errorf("a piece of this share's index unpacks to more than %d MB: not reading it", maxPlain>>20)
+	}
+	return b, err
 }
 
 // BuildOpts: how the index articles are fetched.
