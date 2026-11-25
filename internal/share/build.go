@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -419,8 +420,37 @@ func streamEnvelope(pool *connPool, parts []any, key []byte, digest string, o Bu
 	return perr
 }
 
-// buildShards: many small shards, fetched, decrypted and parsed in parallel (each worker
-// with its own connection), written in shard order by this goroutine.
+// bigShard: a shard with more than this much encrypted data is streamed on its own, the way
+// a v4 index is: decrypted, unzipped and parsed as its articles arrive, each entry written
+// to the index file as it's read. Read whole, a shard takes several times its size in memory
+// (its bytes, the unzipped text, every entry parsed), and a share split into a few big
+// shards (8 for 23 TB) ran out of memory with all of them read at once.
+const bigShard = 4 << 20
+
+// smallAhead: how much encrypted data of small shards is fetched and parsed ahead of the
+// writer at most (they're read whole, several at a time).
+const smallAhead = 48 << 20
+
+// shardBytes: a shard's encrypted size, from its descriptor (or its parts', or a guess of
+// one index article each when they don't say).
+func shardBytes(sh map[string]any) int64 {
+	if n := int64(num(sh["size"])); n > 0 {
+		return n
+	}
+	var n int64
+	for _, p := range shardParts(sh) {
+		if s := int64(num(p.(map[string]any)["size"])); s > 0 {
+			n += s
+		} else {
+			n += 750_000
+		}
+	}
+	return n
+}
+
+// buildShards: shards written to the index in order. Small ones are fetched, decrypted and
+// parsed in parallel (each worker with its own connection), a bounded amount ahead of the
+// writer; big ones are streamed by the writer itself, their articles fetched in parallel.
 func buildShards(pool *connPool, shards []any, key []byte, b *Builder, o BuildOpts) error {
 	n := len(shards)
 	type res struct {
@@ -428,18 +458,31 @@ func buildShards(pool *connPool, shards []any, key []byte, b *Builder, o BuildOp
 		pool int64
 		err  error
 	}
+	size, big := make([]int64, n), make([]bool, n)
+	var small []int
+	for i, sh := range shards {
+		size[i] = shardBytes(sh.(map[string]any))
+		if big[i] = size[i] > bigShard; !big[i] {
+			small = append(small, i)
+		}
+	}
 	slots := make([]chan res, n)
 	for i := range slots {
 		slots[i] = make(chan res, 1)
 	}
 	jobs := make(chan int, n)
 	var wg sync.WaitGroup
-	workers := min(o.Conns, n)
+	var stopped atomic.Bool
+	workers := min(o.Conns, len(small))
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
+				if stopped.Load() {
+					slots[i] <- res{}
+					continue
+				}
 				sh := shards[i].(map[string]any)
 				docs, np, err := func() ([]*Doc, int64, error) {
 					blob, err := pool.fetchWhole(shardParts(sh))
@@ -471,39 +514,57 @@ func buildShards(pool *connPool, shards []any, key []byte, b *Builder, o BuildOp
 			}
 		}()
 	}
-	window := max(32, 4*workers) // shards in flight ahead of the writer (bounds memory)
-	next := 0
-	for ; next < min(window, n); next++ {
-		jobs <- next
-	}
+	// small shards in flight ahead of the writer: at most window of them, and smallAhead bytes
+	// (one at least, whatever its size)
+	window := max(32, 4*workers)
+	next, ahead, aheadBytes := 0, 0, int64(0)
 	var firstErr error
-	var base int64
-	t0 := time.Now()
-	for i := 0; i < n; i++ {
-		r := <-slots[i]
-		if next < n && firstErr == nil {
-			jobs <- next
+	dispatch := func() {
+		for firstErr == nil && next < len(small) && ahead < window && (ahead == 0 || aheadBytes+size[small[next]] <= smallAhead) {
+			jobs <- small[next]
+			ahead, aheadBytes = ahead+1, aheadBytes+size[small[next]]
 			next++
 		}
-		if firstErr != nil {
-			continue
-		}
-		if r.err != nil {
-			firstErr = r.err
-			continue
-		}
-		for _, d := range r.docs {
-			if err := b.ApplyDoc(d, base); err != nil {
-				firstErr = err
+	}
+	var base int64
+	t0 := time.Now()
+	for i := 0; i < n && firstErr == nil; i++ {
+		if big[i] {
+			sh := shards[i].(map[string]any)
+			start, np := base, int64(0)
+			err := streamEnvelope(pool, shardParts(sh), key, str(sh["digest"]), o, func(d *Doc) error {
+				np += int64(len(d.Pool))
+				return b.ApplyDoc(d, start)
+			})
+			if err != nil {
+				firstErr = fmt.Errorf("shard %d: %w", num(sh["shard_index"]), err)
 				break
 			}
+			base += np
+		} else {
+			dispatch() // shard i is on its way (every small shard before it has been written)
+			r := <-slots[i]
+			ahead, aheadBytes = ahead-1, aheadBytes-size[i]
+			if r.err != nil {
+				firstErr = r.err
+				break
+			}
+			for _, d := range r.docs {
+				if err := b.ApplyDoc(d, base); err != nil {
+					firstErr = err
+					break
+				}
+			}
+			base += r.pool
+			r.docs = nil
+			dispatch()
 		}
-		base += r.pool
 		if time.Since(t0) > 4*time.Second || i == n-1 {
 			t0 = time.Now()
 			o.log("core index: shard %d/%d (%d%%), %d pool entries", i+1, n, 100*(i+1)/n, base)
 		}
 	}
+	stopped.Store(firstErr != nil) // the shards still queued are skipped
 	close(jobs)
 	wg.Wait()
 	return firstErr

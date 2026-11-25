@@ -1,0 +1,217 @@
+package share
+
+import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"math/rand"
+	"net"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"usnfetch/internal/nntp"
+	"usnfetch/internal/yenc"
+)
+
+// articleServer: a news server holding the given articles (BODY only).
+func articleServer(t *testing.T, arts map[string][]byte) *nntp.Account {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				r, w := bufio.NewReader(c), bufio.NewWriter(c)
+				w.WriteString("200 fake news\r\n")
+				w.Flush()
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					cmd, arg, _ := strings.Cut(strings.TrimSpace(line), " ")
+					switch strings.ToUpper(cmd) {
+					case "BODY":
+						body, ok := arts[strings.Trim(arg, "<>")]
+						if !ok {
+							w.WriteString("430 no such article\r\n")
+							break
+						}
+						w.WriteString("222 0 " + arg + "\r\n")
+						for _, l := range bytes.Split(bytes.TrimRight(body, "\r\n"), []byte("\r\n")) {
+							if bytes.HasPrefix(l, []byte(".")) {
+								w.WriteString(".")
+							}
+							w.Write(l)
+							w.WriteString("\r\n")
+						}
+						w.WriteString(".\r\n")
+					case "QUIT":
+						w.WriteString("205 bye\r\n")
+						w.Flush()
+						return
+					default:
+						w.WriteString("500 what?\r\n")
+					}
+					w.Flush()
+				}
+			}()
+		}
+	}()
+	return &nntp.Account{Name: "fake", Server: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, Connections: 8}
+}
+
+// shardedShare posts a v5 share whose shards have the given numbers of pool entries (one
+// file per 10 entries), and returns its manifest and a file in each shard with the message
+// ID its first segment must come from.
+func shardedShare(t *testing.T, key []byte, entries []int) (Manifest, map[string]string, map[string][]byte) {
+	t.Helper()
+	rng := rand.New(rand.NewSource(1))
+	randHex := func(n int) string {
+		b := make([]byte, n)
+		rng.Read(b)
+		return hex.EncodeToString(b)
+	}
+	block, _ := aes.NewCipher(key)
+	aead, _ := cipher.NewGCM(block)
+	arts := map[string][]byte{}
+	want := map[string]string{} // path -> msgid of its first segment
+	var shards []any
+	for si, n := range entries {
+		pool := make([]map[string]any, 0, n)
+		var files []map[string]any
+		for k := 0; k < n; k++ {
+			pool = append(pool, map[string]any{"m": fmt.Sprintf("s%dp%d.%s@test", si, k, randHex(8)), "n": randHex(12), "t": randHex(16), "s": 700000})
+		}
+		for f := 0; f*10 < n; f++ {
+			p := fmt.Sprintf("shard%d/file%05d.bin", si, f)
+			cnt := min(10, n-f*10)
+			files = append(files, map[string]any{"file_id": randHex(8), "path": p, "name": filepath.Base(p), "size": cnt * 700000,
+				"hash": randHex(32), "seg_range": map[string]any{"start": f * 10, "stride": 1, "count": cnt}})
+			if f == 0 || f*10+10 >= n {
+				want[p] = pool[f*10]["m"].(string)
+			}
+		}
+		doc, _ := json.Marshal(map[string]any{"shard_index": si, "segment_size": 700000, "msgid_pool": pool, "files": files})
+		var z bytes.Buffer
+		zw, _ := gzip.NewWriterLevel(&z, gzip.BestSpeed)
+		zw.Write(doc)
+		zw.Close()
+		nonce := []byte(randHex(6)) // 12 bytes
+		sealed := aead.Seal(nil, nonce, z.Bytes(), nil)
+		ct, tag := sealed[:len(sealed)-16], sealed[len(sealed)-16:]
+		blob := append(append(append([]byte{}, nonce...), tag...), ct...)
+		var parts []any
+		for off, pn := 0, 1; off < len(blob); off, pn = off+700000, pn+1 {
+			chunk := blob[off:min(off+700000, len(blob))]
+			m := fmt.Sprintf("idx%d-%d@test", si, pn)
+			arts[m] = yenc.Encode(chunk, "x")
+			parts = append(parts, map[string]any{"part_number": pn, "primary_msgid": m, "redundancy_msgids": []any{}, "size": len(chunk)})
+		}
+		d := sha256.Sum256(blob)
+		shards = append(shards, map[string]any{"shard_index": si, "parts": parts, "digest": hex.EncodeToString(d[:]), "size": len(blob)})
+	}
+	raw, _ := json.Marshal(map[string]any{"format": "core_index", "version": 5, "folder_id": "f0", "share_id": "s0", "shards": shards})
+	m, err := ParseManifest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, want, arts
+}
+
+// A share split into a few big shards (with small ones between them) builds a complete,
+// correctly numbered index without holding whole shards in memory.
+func TestBuildBigShards(t *testing.T) {
+	key := bytes.Repeat([]byte{7}, 32)
+	entries := []int{900, 140000, 1200, 140000, 800, 140000, 500} // the big ones: about 10 MB encrypted each
+	m, want, arts := shardedShare(t, key, entries)
+	for _, sh := range m.List("shards") {
+		if n := shardBytes(sh.(map[string]any)); (n > bigShard) != (num(sh.(map[string]any)["shard_index"])%2 == 1) {
+			t.Fatalf("shard %v: %d bytes, not the size the test needs", sh.(map[string]any)["shard_index"], n)
+		}
+	}
+	acc := articleServer(t, arts)
+	path := filepath.Join(t.TempDir(), "x.usnindex")
+
+	runtime.GC()
+	var base runtime.MemStats
+	runtime.ReadMemStats(&base)
+	var peak atomic.Uint64
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var ms runtime.MemStats
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+			runtime.ReadMemStats(&ms)
+			if ms.HeapInuse > peak.Load() {
+				peak.Store(ms.HeapInuse)
+			}
+		}
+	}()
+	_, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: 8})
+	close(done)
+	wg.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grew := int64(peak.Load()) - int64(base.HeapInuse)
+	t.Logf("peak heap during the build: +%d MB", grew>>20)
+
+	ix, err := OpenIndex(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	files, got := 0, 0
+	for _, n := range entries {
+		files += (n + 9) / 10
+	}
+	if err := ix.EachFile(func(FileEntry) error { got++; return nil }); err != nil || got != files {
+		t.Errorf("%d files (%v), want %d", got, err, files)
+	}
+	for p, msgid := range want {
+		fe, err := ix.FileByPath(p)
+		if err != nil || fe == nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		plan, err := ix.Plan(*fe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seg, err := ix.Segment(plan, 0)
+		if err != nil || len(seg.Msgids) == 0 || seg.Msgids[0] != msgid {
+			t.Errorf("%s: first segment %v (%v), want %s", p, seg.Msgids, err, msgid)
+		}
+	}
+	// read whole and all at once, the three big shards took about 300 MB here, and that grows
+	// with the shards' size; streamed, it stays at what's in flight
+	if grew > 200<<20 {
+		t.Errorf("the build's heap grew by %d MB", grew>>20)
+	}
+}
