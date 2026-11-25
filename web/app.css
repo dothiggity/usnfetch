@@ -187,23 +187,23 @@ table.t td.act { width: 1%; white-space: nowrap; text-align: right; }
 .gm-t b { font-size: 14.5px; }
 .gm-b { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 /* "working on it" while a share opens, in place of its log: a text-mode progress bar in the
-   icon's style (its green, block characters, the sparkle), on the dark well logs use */
-.thinking.ansi { --an-hi: #45ec86; --an-lo: #1d6b3f; display: grid; gap: 8px; padding: 12px 14px; margin: 4px 0;
+   icon's style (block characters, the sparkle) in the theme's colours, on the well logs use */
+.thinking.ansi { --an-hi: var(--accent); --an-lo: color-mix(in srgb, var(--accent) 48%, var(--well)); display: grid; gap: 8px; padding: 12px 14px; margin: 4px 0;
   background: var(--well); color: var(--well-ink); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); font-family: var(--mono); }
 .an-line { display: flex; gap: 9px; align-items: baseline; font-size: 13.5px; font-weight: 700; min-width: 0; }
 .an-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.an-star { color: #fff; text-shadow: 0 0 6px rgba(255, 255, 255, .6); animation: an-twinkle 1.4s steps(1) infinite; }
+.an-star { color: color-mix(in srgb, var(--accent) 22%, #fff); text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 65%, transparent); animation: an-twinkle 1.4s steps(1) infinite; }
 .an-spin { color: var(--an-hi); width: 1ch; flex: none; }
 .an-bar { display: flex; align-items: baseline; gap: 1.2ch; white-space: pre; font-size: 15px; line-height: 1.15; overflow: hidden; }
 .an-cells { letter-spacing: 0; }
 .an-fill { color: var(--an-hi); }
 .an-hot { color: var(--an-hi); text-shadow: 0 0 7px color-mix(in srgb, var(--an-hi) 70%, transparent); }
 .an-dim, .an-cap { color: var(--an-lo); }
-.an-pct { color: var(--well-ink); font-size: 13px; font-weight: 700; }
+.an-pct { color: var(--well-ink); font-size: 13px; font-weight: 700; min-width: 4ch; text-align: right; flex: none; }
 .an-sub { font-family: var(--sans); }
 @keyframes an-twinkle { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
-:root[data-tone="light"] .thinking.ansi { --an-hi: #11924a; --an-lo: #a6d8b8; }
-:root[data-tone="light"] .an-star { color: #e0a800; text-shadow: none; }
+:root[data-tone="light"] .thinking.ansi { --an-lo: color-mix(in srgb, var(--accent) 30%, var(--well)); }
+:root[data-tone="light"] .an-star { color: var(--accent); text-shadow: none; }
 @media (prefers-reduced-motion: reduce) { .an-star { animation: none; } }
 /* the search bar: what to search for, then the words */
 .search-bar { display: flex; gap: 8px; align-items: stretch; }

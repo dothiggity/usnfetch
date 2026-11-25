@@ -351,30 +351,44 @@ async function openShare(body) {
 }
 
 // thinking: "working on it" while a share opens, in place of its raw log (that's on the System
-// page): a text-mode progress bar in the icon's style, block characters in its green with the
-// sparkle. It fills as far as is known (downloading the index), with a shine running along;
-// while that isn't known, a dithered comet sweeps across like the icon's swoosh.
-// el.update(share) moves it along; it stops by itself once it's off the page.
-const ANSI_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", ANSI_COMET = "░▒▓██▓▒░", ANSI_CELLS = 34;
+// page): a text-mode progress bar in the icon's style, block characters with the sparkle, in
+// the theme's colours, as wide as the room it has. It fills as far as is known (downloading
+// the index), with a shine running along; while that isn't known, a dithered comet sweeps
+// across like the icon's swoosh. el.update(share) moves it along; it stops by itself once
+// it's off the page.
+const ANSI_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", ANSI_COMET = "░▒▓██▓▒░";
 function thinking() {
   const spin = h("span", { class: "an-spin", "aria-hidden": "true" }, ANSI_SPIN[0]);
   const text = h("span", { class: "an-text" }, "Finding the share on Usenet");
   const bar = h("span", { class: "an-cells" });
   const pctEl = h("span", { class: "an-pct" });
+  const line = h("div", { class: "an-bar", "aria-hidden": "true" }, bar, pctEl);
   const sub = h("div", { class: "an-sub faint small" });
   const el = h("div", { class: "thinking ansi", role: "status", "aria-live": "polite" },
-    h("div", { class: "an-line" }, h("span", { class: "an-star", "aria-hidden": "true" }, "✦"), spin, text),
-    h("div", { class: "an-bar", "aria-hidden": "true" }, bar, pctEl), sub);
+    h("div", { class: "an-line" }, h("span", { class: "an-star", "aria-hidden": "true" }, "✦"), spin, text), line, sub);
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let pct = null, frame = 0, seen = false;
+  let pct = null, frame = 0, seen = false, cols = 34, cw = 0;
+  // fit: as many cells as the line has room for, next to the caps and a "100%"
+  const fit = () => {
+    if (!cw) {   // a cell's width: the block characters' own (the font may borrow them from another)
+      const probe = h("span", { class: "an-cells", style: { position: "absolute", visibility: "hidden" } }, "░".repeat(20));
+      line.append(probe);
+      cw = probe.getBoundingClientRect().width / 20;
+      probe.remove();
+    }
+    const room = line.clientWidth - pctEl.getBoundingClientRect().width - parseFloat(getComputedStyle(line).columnGap || "0");
+    if (cw > 0 && room > 0) cols = Math.max(8, Math.floor(room / cw) - 2);
+  };
+  const sized = new ResizeObserver(() => { const was = cols; fit(); if (cols !== was) draw(); });
+  sized.observe(line);
   const draw = () => {
     const cells = [];
     if (pct == null) {
-      const n = ANSI_COMET.length, at = still ? (ANSI_CELLS - n) >> 1 : (frame % (ANSI_CELLS + n)) - n;
-      for (let i = 0; i < ANSI_CELLS; i++) cells.push(i - at >= 0 && i - at < n ? [ANSI_COMET[i - at], "hot"] : ["░", "dim"]);
+      const n = ANSI_COMET.length, at = still ? (cols - n) >> 1 : (frame % (cols + n)) - n;
+      for (let i = 0; i < cols; i++) cells.push(i - at >= 0 && i - at < n ? [ANSI_COMET[i - at], "hot"] : ["░", "dim"]);
     } else {
-      const full = Math.round((pct / 100) * ANSI_CELLS), shine = still ? -1 : frame % (full + 8);
-      for (let i = 0; i < ANSI_CELLS; i++) {
+      const full = Math.round((pct / 100) * cols), shine = still ? -1 : frame % (full + 8);
+      for (let i = 0; i < cols; i++) {
         cells.push(i < full ? [i === shine ? "▓" : "█", i === shine ? "hot" : "fill"] : i === full ? ["▓▒░▒"[still ? 0 : frame % 4], "hot"] : ["░", "dim"]);
       }
     }
@@ -389,7 +403,7 @@ function thinking() {
   };
   const tick = setInterval(() => {
     if (el.isConnected) seen = true;
-    else if (seen || frame > 200) { clearInterval(tick); return; }
+    else if (seen || frame > 200) { clearInterval(tick); sized.disconnect(); return; }
     frame++;
     if (!still || frame % 10 === 0) draw();
   }, 90);
