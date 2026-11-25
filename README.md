@@ -107,9 +107,6 @@ It keeps up to 20 GB of them.
 Provider passwords are encrypted on Windows. On Linux and macOS they're in the settings file,
 which only your user can read.
 
-Coming from the old Python version? Point it at the same folder and it picks up your jobs, catalog
-and settings.
-
 ## Privacy
 
 usnfetch only connects to your Usenet providers, and to your front-end if you give a library a
