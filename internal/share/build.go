@@ -243,7 +243,7 @@ func BuildIndex(m Manifest, key []byte, path string, o BuildOpts) (string, error
 		o.log("core index: %d shards", len(shards))
 		if len(shards) == 1 {
 			sh := shards[0].(map[string]any)
-			err = streamEnvelope(pool, shardParts(sh), key, str(sh["digest"]), o, func(d *Doc) error { return b.ApplyDoc(d, 0) })
+			err = streamEnvelope(pool, shardParts(sh), key, str(sh["digest"]), o, func(d *Doc) error { return b.ApplyDoc(d, 0) }, nil)
 		} else {
 			err = buildShards(pool, shards, key, b, o)
 		}
@@ -286,7 +286,7 @@ func BuildIndex(m Manifest, key []byte, path string, o BuildOpts) (string, error
 			return "", errors.New("manifest has no core_index parts")
 		}
 		o.log("core index: %d part(s)", len(parts))
-		err = streamEnvelope(pool, sortedParts(parts), key, "", o, func(d *Doc) error { return b.ApplyDoc(d, 0) })
+		err = streamEnvelope(pool, sortedParts(parts), key, "", o, func(d *Doc) error { return b.ApplyDoc(d, 0) }, nil)
 	}
 	if err != nil {
 		return "", err
@@ -310,7 +310,9 @@ func shardParts(sh map[string]any) []any {
 // streamEnvelope: one encrypted envelope arriving as many articles. They are prefetched
 // over the pool's connections (a window ahead, consumed in order) and streamed through
 // AES-GCM, decompression and the JSON parser; the tag and digest are checked at the end.
-func streamEnvelope(pool *connPool, parts []any, key []byte, digest string, o BuildOpts, emit func(*Doc) error) error {
+// progress, if given, hears of each article written (done of n) in place of the log line
+// (a shard of many reports how far the whole index is).
+func streamEnvelope(pool *connPool, parts []any, key []byte, digest string, o BuildOpts, emit func(*Doc) error, progress func(done, n int)) error {
 	n := len(parts)
 	window := max(16, 6*o.Conns)
 	type res struct {
@@ -395,7 +397,9 @@ func streamEnvelope(pool *connPool, parts []any, key []byte, digest string, o Bu
 			if _, err := pw.Write(plain); err != nil {
 				return err
 			}
-			if n > 1 && time.Since(t0) > 4*time.Second {
+			if progress != nil {
+				progress(i+1, n)
+			} else if n > 1 && time.Since(t0) > 4*time.Second {
 				t0 = time.Now()
 				o.log("core index: %d/%d articles fetched (%d%%)", i+1, n, 100*(i+1)/n)
 			}
@@ -430,6 +434,9 @@ const bigShard = 4 << 20
 // smallAhead: how much encrypted data of small shards is fetched and parsed ahead of the
 // writer at most (they're read whole, several at a time).
 const smallAhead = 48 << 20
+
+// progressEvery: how often a sharded build logs how far it is (a test sets it shorter).
+var progressEvery = 4 * time.Second
 
 // shardBytes: a shard's encrypted size, from its descriptor (or its parts', or a guess of
 // one index article each when they don't say).
@@ -526,21 +533,42 @@ func buildShards(pool *connPool, shards []any, key []byte, b *Builder, o BuildOp
 			next++
 		}
 	}
+	// how far the whole index is, by encrypted bytes written (shards differ a lot in size, so
+	// counting shards would jump); one figure for every line, so the progress bar only goes up
+	var total, done int64
+	for _, s := range size {
+		total += s
+	}
 	var base int64
 	t0 := time.Now()
+	report := func(i int, part int64, pool int64, final bool) {
+		if !final && time.Since(t0) < progressEvery {
+			return
+		}
+		t0 = time.Now()
+		pct := int64(100)
+		if total > 0 {
+			pct = min(100, 100*(done+part)/total)
+		}
+		if !final {
+			pct = min(pct, 99) // 100 only once it's all written
+		}
+		o.log("core index: shard %d/%d (%d%%), %d pool entries", i+1, n, pct, pool)
+	}
 	for i := 0; i < n && firstErr == nil; i++ {
 		if big[i] {
 			sh := shards[i].(map[string]any)
-			start, np := base, int64(0)
+			start := base
+			var np atomic.Int64 // counted by the parser, read by the progress line
 			err := streamEnvelope(pool, shardParts(sh), key, str(sh["digest"]), o, func(d *Doc) error {
-				np += int64(len(d.Pool))
+				np.Add(int64(len(d.Pool)))
 				return b.ApplyDoc(d, start)
-			})
+			}, func(k, of int) { report(i, size[i]*int64(k)/int64(max(of, 1)), start+np.Load(), false) })
 			if err != nil {
 				firstErr = fmt.Errorf("shard %d: %w", num(sh["shard_index"]), err)
 				break
 			}
-			base += np
+			base += np.Load()
 		} else {
 			dispatch() // shard i is on its way (every small shard before it has been written)
 			r := <-slots[i]
@@ -559,10 +587,8 @@ func buildShards(pool *connPool, shards []any, key []byte, b *Builder, o BuildOp
 			r.docs = nil
 			dispatch()
 		}
-		if time.Since(t0) > 4*time.Second || i == n-1 {
-			t0 = time.Now()
-			o.log("core index: shard %d/%d (%d%%), %d pool entries", i+1, n, 100*(i+1)/n, base)
-		}
+		done += size[i]
+		report(i, 0, base, i == n-1)
 	}
 	stopped.Store(firstErr != nil) // the shards still queued are skipped
 	close(jobs)

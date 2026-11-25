@@ -13,7 +13,10 @@ import (
 	"math/rand"
 	"net"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -174,11 +177,24 @@ func TestBuildBigShards(t *testing.T) {
 			}
 		}
 	}()
-	_, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: 8})
+	progressEvery = 0 // every step logs how far it is
+	t.Cleanup(func() { progressEvery = 4 * time.Second })
+	var pcts []int
+	logf := func(l string) {
+		if mm := regexp.MustCompile(`\((\d+)%\)`).FindStringSubmatch(l); mm != nil {
+			p, _ := strconv.Atoi(mm[1])
+			pcts = append(pcts, p)
+		}
+	}
+	_, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: 8, Log: logf})
 	close(done)
 	wg.Wait()
 	if err != nil {
 		t.Fatal(err)
+	}
+	// one figure for the whole index, so the progress bar only goes up (and ends at 100)
+	if len(pcts) < 10 || pcts[len(pcts)-1] != 100 || !slices.IsSorted(pcts) {
+		t.Errorf("progress went %v", pcts)
 	}
 	grew := int64(peak.Load()) - int64(base.HeapInuse)
 	t.Logf("peak heap during the build: +%d MB", grew>>20)
