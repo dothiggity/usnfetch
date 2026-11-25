@@ -1,15 +1,17 @@
 # usnfetch
 
-usnfetch downloads usn:// shares from your own Usenet provider. It runs in the background
-with a web page you keep open in a tab, like SABnzbd or the *arr apps.
+usnfetch downloads usn:// shares from your own Usenet provider. A share is a collection of
+files, encrypted and posted to Usenet, that you open with a `usn://` link. usnfetch runs in the
+background with a web page you keep open in a tab, like SABnzbd or the *arr apps.
 
 I wanted that for `usn://` links. Getting a share into SABnzbd meant a bridge app that never quite
 worked, so usnfetch does the whole job itself. It fetches the articles, decrypts them and checks
 every file against the share's SHA-256.
 
-It's not affiliated with any other app and doesn't come with any shares. You bring your own links.
+It's not affiliated with any other app and doesn't come with any shares. You bring your own links,
+and what you download is up to you.
 
-![The catalog: each build with its launcher and device, what's inside it, its size and its health](docs/catalog.png)
+![Six screens in turn: the box-art gallery, Settings → Libraries, a download into a library, Search, the download queue and the catalog](docs/screenshots.png)
 
 *The builds, consoles and games in these screenshots are made up.*
 
@@ -24,33 +26,37 @@ It's not affiliated with any other app and doesn't come with any shares. You bri
 - Queue, pause, reorder, limit the speed, set a schedule.
 - Use more than one provider, with priorities like SABnzbd.
 
-## Screenshots
+## What you need
 
-The gallery. Tick the games you want.
-
-![A build's games as a gallery of box art, three of them ticked](docs/gallery.png)
-
-Two systems going into a RetroBat, one copy per game.
-
-![The download review: one copy per game, saved to a RetroBat library](docs/library.png)
-
-Search, with the games your library already has marked.
-
-![A game search: each game with its console, its builds and a Download button](docs/search.png)
-
-The queue.
-
-![Activity: a download in progress with its speed and ETA, and a finished one in History](docs/activity.png)
+- A Usenet provider account.
+- The `usn://` links of the shares you want.
+- 7-Zip or UnRAR, if you want RAR sets unpacked.
+- Windows 10 or 11, Linux (64-bit, including a Raspberry Pi 4 or 5), or a Mac with Apple silicon
+  (that one's untested).
 
 ## Getting started
 
 1. Get the latest build from [Releases](https://github.com/dothiggity/usnfetch/releases):
-   `windows-amd64` for most PCs, `linux-amd64`, or `linux-arm64` for a Raspberry Pi 4 or 5.
+
+   | You have | Download |
+   | --- | --- |
+   | Windows | `windows-amd64.zip`, or `windows-arm64.zip` for Windows on Arm |
+   | Linux | `linux-amd64.tar.gz`, or `linux-arm64.tar.gz` for a Raspberry Pi |
+   | Mac | `darwin-arm64.tar.gz` |
+
 2. On Windows, unzip it and double-click `usnfetch.exe`. It sits by the clock and opens
    http://localhost:7979/. Anywhere else, run `usnfetch serve`.
 3. Setup asks for your Usenet provider (it can copy yours from SABnzbd) and a download folder.
 4. Add links. **Catalog → Import list** takes a list of `usn://` links, **Catalog → Open link**
    opens one share, and **Activity → Add links** downloads whole shares.
+
+The builds aren't code-signed yet, so Windows may say it protected your PC. Check the zip against
+the checksums file on the release page, then choose More info → Run anyway.
+
+## Updating
+
+Stop usnfetch, replace `usnfetch.exe` (or `usnfetch`) with the new one, and start it again.
+Settings, the catalog and your downloads stay. The release notes say if anything else is needed.
 
 ## Good to know
 
@@ -58,8 +64,9 @@ The queue.
   zipped, RAR sets get unpacked. You can change both per download.
 - **Search** only knows the builds you've opened or downloaded. Each result's Download button
   says where the file goes.
-- **Libraries** go in Settings → Libraries. Then pick one under Save to when you download. Games
-  go into that device's folder for their system, BIOS files into its BIOS folder.
+- **Libraries** are the devices you play on. Add each one in Settings → Libraries and give it a
+  name, like "Living room PC". When you download, pick it under Save to. Games go into that
+  device's folder for their system, BIOS files into its BIOS folder.
   - RetroBat and Batocera also get each game's art, video, manual and `gamelist.xml` entry.
     Nothing else in the list changes, and the old list is kept as a backup. Then
     EmulationStation reloads. For Batocera on another computer, turn on System settings →
@@ -97,8 +104,21 @@ the program instead.
 Each share you open leaves its index there (about 100 MB per TB), so it opens instantly next time.
 It keeps up to 20 GB of them.
 
-Provider passwords are encrypted with Windows' data protection. Coming from the old Python version?
-Point it at the same folder and it picks up your jobs, catalog and settings.
+Provider passwords are encrypted on Windows. On Linux and macOS they're in the settings file,
+which only your user can read.
+
+Coming from the old Python version? Point it at the same folder and it picks up your jobs, catalog
+and settings.
+
+## Privacy
+
+usnfetch only connects to your Usenet providers, and to your front-end if you give a library a
+reload address. No telemetry, no update check.
+
+## Status
+
+It's still 0.x. I use it every day, but things change between versions, and the release notes
+say what.
 
 ## Command line
 
@@ -110,28 +130,11 @@ The account can also come from `USNFETCH_SERVER`, `USNFETCH_PORT`, `USNFETCH_SSL
 
 ## Building it yourself
 
-You need Go 1.27. No C toolchain, so cross-compiling is just `GOOS`/`GOARCH`.
+You need Go 1.27:
 
     go build -o bin/usnfetch.exe ./cmd/usnfetch
-    go test ./...
 
-The web page is plain JavaScript built into the program. `--web web` serves it from disk, so a
-browser refresh shows your changes.
-
-    cmd/usnfetch/      the program: serve, tray, list, fetch, set-password, version
-    internal/share/    share links, manifests, the index, games and BIOS files
-    internal/engine/   downloading, decrypting, streaming, speed limit, checks
-    internal/nntp/     NNTP client and connection limits
-    internal/yenc/     yEnc decoding
-    internal/app/      settings, the queue, the schedule, saved state, resets
-    internal/catalog/  link lists, launchers and devices
-    internal/extract/  unpacking (7-Zip / UnRAR)
-    internal/web/      the web API
-    web/               the browser UI
-
-To release: write `.github/release-notes/v<version>.md`, set `Version` in
-`cmd/usnfetch/serve.go`, commit, tag (`git tag -a v1.2.3 -m "usnfetch 1.2.3"`) and push the tag.
-GitHub Actions tests it and publishes the downloads.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the tests, the code layout and how releases are made.
 
 ## License
 
