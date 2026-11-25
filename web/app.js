@@ -350,23 +350,58 @@ async function openShare(body) {
   location.hash = "#/share/" + s.id;
 }
 
-// thinking: a "working on it" animation and a line saying what's going on, in place of the
-// raw log while a share opens (the log itself is on the System page). el.update(share) moves
-// it along.
+// thinking: "working on it" while a share opens, in place of its raw log (that's on the System
+// page): a text-mode progress bar in the icon's style, block characters in its green with the
+// sparkle. It fills as far as is known (downloading the index), with a shine running along;
+// while that isn't known, a dithered comet sweeps across like the icon's swoosh.
+// el.update(share) moves it along; it stops by itself once it's off the page.
+const ANSI_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", ANSI_COMET = "░▒▓██▓▒░", ANSI_CELLS = 34;
 function thinking() {
-  const text = h("div", { class: "th-text" }, "Finding the share on Usenet");
-  const bar = h("div", { class: "th-bar hidden" }, h("i"));
-  const sub = h("div", { class: "th-sub faint small" });
-  const el = h("div", { class: "thinking", role: "status", "aria-live": "polite" },
-    h("div", { class: "th-dots", "aria-hidden": "true" }, h("span"), h("span"), h("span")), h("div", { class: "th-body" }, text, bar, sub));
+  const spin = h("span", { class: "an-spin", "aria-hidden": "true" }, ANSI_SPIN[0]);
+  const text = h("span", { class: "an-text" }, "Finding the share on Usenet");
+  const bar = h("span", { class: "an-cells" });
+  const pctEl = h("span", { class: "an-pct" });
+  const sub = h("div", { class: "an-sub faint small" });
+  const el = h("div", { class: "thinking ansi", role: "status", "aria-live": "polite" },
+    h("div", { class: "an-line" }, h("span", { class: "an-star", "aria-hidden": "true" }, "✦"), spin, text),
+    h("div", { class: "an-bar", "aria-hidden": "true" }, bar, pctEl), sub);
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let pct = null, frame = 0, seen = false;
+  const draw = () => {
+    const cells = [];
+    if (pct == null) {
+      const n = ANSI_COMET.length, at = still ? (ANSI_CELLS - n) >> 1 : (frame % (ANSI_CELLS + n)) - n;
+      for (let i = 0; i < ANSI_CELLS; i++) cells.push(i - at >= 0 && i - at < n ? [ANSI_COMET[i - at], "hot"] : ["░", "dim"]);
+    } else {
+      const full = Math.round((pct / 100) * ANSI_CELLS), shine = still ? -1 : frame % (full + 8);
+      for (let i = 0; i < ANSI_CELLS; i++) {
+        cells.push(i < full ? [i === shine ? "▓" : "█", i === shine ? "hot" : "fill"] : i === full ? ["▓▒░▒"[still ? 0 : frame % 4], "hot"] : ["░", "dim"]);
+      }
+    }
+    const runs = [];   // one span per run of a kind
+    for (const [ch, k] of cells) {
+      const last = runs[runs.length - 1];
+      if (last && last.k === k) last.s += ch; else runs.push({ k, s: ch });
+    }
+    bar.replaceChildren(h("span", { class: "an-cap" }, "▐"), ...runs.map((r) => h("span", { class: "an-" + r.k }, r.s)), h("span", { class: "an-cap" }, "▌"));
+    pctEl.textContent = pct == null ? "" : String(pct).padStart(3) + "%";
+    spin.textContent = ANSI_SPIN[frame % ANSI_SPIN.length];
+  };
+  const tick = setInterval(() => {
+    if (el.isConnected) seen = true;
+    else if (seen || frame > 200) { clearInterval(tick); return; }
+    frame++;
+    if (!still || frame % 10 === 0) draw();
+  }, 90);
   const t0 = Date.now();
   el.update = (s) => {
     const p = sharePhase(s);
     if (text.textContent !== p.text) text.textContent = p.text;
-    bar.classList.toggle("hidden", p.pct == null);
-    if (p.pct != null) bar.firstChild.style.width = Math.max(3, p.pct) + "%";
+    pct = p.pct == null ? null : Math.max(0, Math.min(100, p.pct));
     sub.textContent = Date.now() - t0 > 8000 ? "Big shares take a few seconds per TB the first time. After that they open straight away." : "";
+    draw();
   };
+  draw();
   return el;
 }
 
