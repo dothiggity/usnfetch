@@ -27,14 +27,17 @@ import (
 	"usnfetch/internal/yenc"
 )
 
-// articleServer: a news server holding the given articles (BODY only).
-func articleServer(t *testing.T, arts map[string][]byte) *nntp.Account {
+// articleServer: a news server holding the given articles (BODY only), each answer delay
+// late; most: the most connections it had open at once.
+func articleServer(t *testing.T, arts map[string][]byte, delay time.Duration) (acc *nntp.Account, most *atomic.Int64) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
+	var open atomic.Int64
+	most = &atomic.Int64{}
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -42,6 +45,10 @@ func articleServer(t *testing.T, arts map[string][]byte) *nntp.Account {
 				return
 			}
 			go func() {
+				n := open.Add(1)
+				for m := most.Load(); n > m && !most.CompareAndSwap(m, n); m = most.Load() {
+				}
+				defer open.Add(-1)
 				defer c.Close()
 				r, w := bufio.NewReader(c), bufio.NewWriter(c)
 				w.WriteString("200 fake news\r\n")
@@ -54,6 +61,7 @@ func articleServer(t *testing.T, arts map[string][]byte) *nntp.Account {
 					cmd, arg, _ := strings.Cut(strings.TrimSpace(line), " ")
 					switch strings.ToUpper(cmd) {
 					case "BODY":
+						time.Sleep(delay)
 						body, ok := arts[strings.Trim(arg, "<>")]
 						if !ok {
 							w.WriteString("430 no such article\r\n")
@@ -80,7 +88,7 @@ func articleServer(t *testing.T, arts map[string][]byte) *nntp.Account {
 			}()
 		}
 	}()
-	return &nntp.Account{Name: "fake", Server: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, Connections: 8}
+	return &nntp.Account{Name: "fake", Server: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, Connections: 8}, most
 }
 
 // shardedShare posts a v5 share whose shards have the given numbers of pool entries (one
@@ -152,7 +160,7 @@ func TestBuildBigShards(t *testing.T) {
 			t.Fatalf("shard %v: %d bytes, not the size the test needs", sh.(map[string]any)["shard_index"], n)
 		}
 	}
-	acc := articleServer(t, arts)
+	acc, _ := articleServer(t, arts, 0)
 	path := filepath.Join(t.TempDir(), "x.usnindex")
 
 	runtime.GC()
@@ -192,42 +200,87 @@ func TestBuildBigShards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// one figure for the whole index, so the progress bar only goes up (and ends at 100)
-	if len(pcts) < 10 || pcts[len(pcts)-1] != 100 || !slices.IsSorted(pcts) {
+	// one figure for the whole index, so the progress bar only goes up (and reaches 100 at the end)
+	if len(pcts) < 10 || slices.Index(pcts, 100) != len(pcts)-1 || !slices.IsSorted(pcts) {
 		t.Errorf("progress went %v", pcts)
 	}
 	grew := int64(peak.Load()) - int64(base.HeapInuse)
 	t.Logf("peak heap during the build: +%d MB", grew>>20)
 
-	ix, err := OpenIndex(path, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ix.Close()
-	files, got := 0, 0
-	for _, n := range entries {
-		files += (n + 9) / 10
-	}
-	if err := ix.EachFile(func(FileEntry) error { got++; return nil }); err != nil || got != files {
-		t.Errorf("%d files (%v), want %d", got, err, files)
-	}
-	for p, msgid := range want {
-		fe, err := ix.FileByPath(p)
-		if err != nil || fe == nil {
-			t.Fatalf("%s: %v", p, err)
-		}
-		plan, err := ix.Plan(*fe)
+	// each shard's files point at its own articles: looked up by scanning, then (folder tree
+	// built) through the tree. Each opened afresh, the tree built before anything is read, as
+	// the app does: the read-only connections take the file as never changing.
+	for _, tree := range []bool{false, true} {
+		ix, err := OpenIndex(path, key)
 		if err != nil {
 			t.Fatal(err)
 		}
-		seg, err := ix.Segment(plan, 0)
-		if err != nil || len(seg.Msgids) == 0 || seg.Msgids[0] != msgid {
-			t.Errorf("%s: first segment %v (%v), want %s", p, seg.Msgids, err, msgid)
+		if tree {
+			if err := ix.EnsureTree(nil); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			files, got := 0, 0
+			for _, n := range entries {
+				files += (n + 9) / 10
+			}
+			if err := ix.EachFile(func(FileEntry) error { got++; return nil }); err != nil || got != files {
+				t.Errorf("%d files (%v), want %d", got, err, files)
+			}
 		}
+		for p, msgid := range want {
+			fe, err := ix.FileByPath(p)
+			if err != nil || fe == nil || fe.Path != p {
+				t.Fatalf("tree=%v %s: %v, %v", tree, p, fe, err)
+			}
+			plan, err := ix.Plan(*fe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seg, err := ix.Segment(plan, 0)
+			if err != nil || len(seg.Msgids) == 0 || seg.Msgids[0] != msgid {
+				t.Errorf("tree=%v %s: first segment %v (%v), want %s", tree, p, seg.Msgids, err, msgid)
+			}
+		}
+		if fe, err := ix.FileByPath("shard1/no-such-file.bin"); fe != nil || err != nil {
+			t.Errorf("tree=%v: a missing file gave %v, %v", tree, fe, err)
+		}
+		ix.Close()
 	}
 	// read whole and all at once, the three big shards took about 300 MB here, and that grows
 	// with the shards' size; streamed, it stays at what's in flight
 	if grew > 200<<20 {
 		t.Errorf("the build's heap grew by %d MB", grew>>20)
+	}
+}
+
+// A big shard streamed while small ones after it are still being fetched shares the build's
+// connections with them: never more open at once than the build may use (it dialled twice as
+// many, which waited out the provider's connection budget and could fail the build).
+func TestBuildShardsConnectionCap(t *testing.T) {
+	key := bytes.Repeat([]byte{9}, 32)
+	entries := []int{300, 100000, 300, 300, 300, 300, 300, 300, 300, 300, 300, 300}
+	m, want, arts := shardedShare(t, key, entries)
+	if n := shardBytes(m.List("shards")[1].(map[string]any)); n <= bigShard {
+		t.Fatalf("shard 1: %d bytes, not big", n)
+	}
+	acc, most := articleServer(t, arts, 15*time.Millisecond) // slow enough that fetches overlap
+	path := filepath.Join(t.TempDir(), "x.usnindex")
+	const conns = 4
+	if _, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: conns}); err != nil {
+		t.Fatal(err)
+	}
+	if n := most.Load(); n > conns {
+		t.Errorf("%d connections open at once, the build may use %d", n, conns)
+	}
+	ix, err := OpenIndex(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	for p := range want {
+		if fe, err := ix.FileByPath(p); err != nil || fe == nil {
+			t.Errorf("%s: %v, %v", p, fe, err)
+		}
 	}
 }

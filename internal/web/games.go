@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,21 +42,17 @@ func (s *Server) biosFile(folderID string) string {
 // them: the systems with the share's details (info), the games and BIOS files in files of
 // their own.
 func (s *Server) saveInside(ix *share.Index, info map[string]any) {
-	if s.insideKept(ix, info) { // worked out from this very index before: nothing to do over
+	folder := shareFolder(ix, info)
+	if s.insideKept(ix, info, folder) { // worked out from this very index before: nothing to do over
 		return
 	}
 	info["packed"] = ix.PackedFiles()
-	info["inside_of"] = share.Key(ix.Path)
-	sys, games, err := ix.Games()
-	if err != nil || sys == nil {
+	sys, games, gerr := ix.Games()
+	if gerr != nil || sys == nil {
 		sys, games = []share.System{}, nil
 	}
-	bios, _ := ix.Bioses()
-	info["inside"], info["inside_v"] = sys, insideVersion
-	folder, _ := ix.Info["folder_id"].(string)
-	if folder == "" {
-		folder, _ = info["folder_id"].(string)
-	}
+	bios, berr := ix.Bioses()
+	info["inside"], info["inside_v"], info["bios_n"] = sys, insideVersion, len(bios)
 	if p := s.gamesFile(folder); p != "" {
 		writeList(p, games)
 		s.games.forget(folder)
@@ -64,29 +61,43 @@ func (s *Server) saveInside(ix *share.Index, info map[string]any) {
 		writeList(p, bios)
 		s.bios.forget(folder)
 	}
+	delete(info, "inside_of")
+	if gerr == nil && berr == nil { // a pass that failed is done again next time
+		info["inside_of"], info["lists"] = share.Key(ix.Path), s.listsMark(folder)
+	}
 }
 
-// insideKept: the share's systems, packed-file count and game and BIOS lists were worked out
-// from this same index (a re-posted share has a new one) by this version of the code, and its
-// game list is still on disk (a reset clears them). Working them out takes seconds on a big
-// build, so opening it again uses them as they are.
-func (s *Server) insideKept(ix *share.Index, info map[string]any) bool {
-	if str(info["inside_of"]) != share.Key(ix.Path) || num(info["inside_v"], -1) != insideVersion || info["packed"] == nil {
-		return false
-	}
-	if sys, _ := info["inside"].([]any); len(sys) == 0 {
-		return true // no games: there's no list file to look for
-	}
+// shareFolder: the share's folder ID, which names its game and BIOS lists.
+func shareFolder(ix *share.Index, info map[string]any) string {
 	folder, _ := ix.Info["folder_id"].(string)
 	if folder == "" {
 		folder, _ = info["folder_id"].(string)
 	}
-	p := s.gamesFile(folder)
-	if p == "" {
+	return folder
+}
+
+// listsMark: what the folder's game and BIOS list files are now (their times and sizes; 0 for
+// one that isn't there), to tell later whether they're still the ones written.
+func (s *Server) listsMark(folder string) string {
+	mark := func(p string) string {
+		if st, err := os.Stat(p); p != "" && err == nil {
+			return strconv.FormatInt(st.ModTime().UnixNano(), 10) + ":" + strconv.FormatInt(st.Size(), 10)
+		}
+		return "0"
+	}
+	return mark(s.gamesFile(folder)) + "|" + mark(s.biosFile(folder))
+}
+
+// insideKept: the share's systems, packed-file count and game and BIOS lists were worked out
+// from this same index (a re-posted share has a new one) by this version of the code, and the
+// list files are still the ones written then: not removed by a reset, nor rewritten for
+// another post of the same folder. Working them out takes seconds on a big build, so opening
+// it again uses them as they are.
+func (s *Server) insideKept(ix *share.Index, info map[string]any, folder string) bool {
+	if str(info["inside_of"]) != share.Key(ix.Path) || num(info["inside_v"], -1) != insideVersion || info["packed"] == nil {
 		return false
 	}
-	_, err := os.Stat(p)
-	return err == nil
+	return folder != "" && str(info["lists"]) == s.listsMark(folder)
 }
 
 // shareKindSearch: one share's games (kind "games") or BIOS files ("bios") matching q, or all
@@ -96,14 +107,22 @@ func (s *Server) insideKept(ix *share.Index, info map[string]any) bool {
 func (s *Server) shareKindSearch(ss *session, ix *share.Index, kind, q, scope string, limit int) map[string]any {
 	t0 := time.Now()
 	folder, _ := ix.Info["folder_id"].(string)
-	scope = strings.Trim(strings.ReplaceAll(scope, "\\", "/"), "/")
+	norm := func(p string) string { // as the folder tree has paths: "/", no empty parts
+		return strings.Join(strings.FieldsFunc(strings.ReplaceAll(p, "\\", "/"), func(r rune) bool { return r == '/' }), "/")
+	}
+	scope = norm(scope)
 	under := func(p string) bool {
-		p = strings.ReplaceAll(p, "\\", "/")
+		p = norm(p)
 		return scope == "" || p == scope || strings.HasPrefix(p, scope+"/")
 	}
 	toks := strings.Fields(share.TitleKey(q))
+	if strings.TrimSpace(q) != "" && len(toks) == 0 { // only punctuation: nothing to match on
+		return map[string]any{"q": q, "path": scope, "kind": kind, "items": []any{}, "folders": []any{}, "files": []any{},
+			"folder_matches": 0, "file_matches": 0, "ms": time.Since(t0).Milliseconds()}
+	}
 	type hit struct {
 		path, system, label, name string
+		folder, file              string // a game's system folder and file, as its list has them
 		score                     int
 		known                     bool
 	}
@@ -122,7 +141,7 @@ func (s *Server) shareKindSearch(ss *session, ix *share.Index, kind, q, scope st
 					sc, ok = titleScore(toks, set.prep[i])
 				}
 				if ok {
-					hits = append(hits, hit{path: p, system: g.System, name: g.Title, score: sc})
+					hits = append(hits, hit{path: p, system: g.System, name: g.Title, folder: g.Folder, file: g.Name, score: sc})
 				}
 			}
 		}
@@ -158,25 +177,56 @@ func (s *Server) shareKindSearch(ss *session, ix *share.Index, kind, q, scope st
 	if len(hits) > limit {
 		hits = hits[:limit]
 	}
-	roots, ls := s.localRoots(ss, ix), listings{}
-	files, folders := []map[string]any{}, []map[string]any{}
-	for _, h := range hits {
-		if fe, _ := ix.FileByPath(h.path); fe != nil {
-			fj := fileJSON(*fe)
-			if d := path.Dir(strings.ReplaceAll(fe.Path, "\\", "/")); d != "." {
-				fj["folder"] = d
-			}
-			fj["system"], fj["label"] = h.system, h.label
-			if st := fileState(ls, roots, fe.Path, fe.Size); st != "" {
-				fj["local"] = st
-			}
-			files = append(files, fj)
-		} else if d, _ := ix.Dir(h.path); d != nil { // a game kept in a folder of its own
-			folders = append(folders, map[string]any{"name": path.Base(d.Path), "path": d.Path, "size": d.Size, "count": d.Count,
-				"local": folderThere(ls, roots, d.Path), "system": h.system})
+	// a game is all its files (discs, tracks, regions, revisions), read once per system folder
+	parts := map[string]map[string][]share.GameFile{}
+	if kind == "games" {
+		byFolder := map[string][]string{}
+		for _, h := range hits {
+			byFolder[h.folder] = append(byFolder[h.folder], h.file)
+		}
+		for f, names := range byFolder {
+			parts[f], _ = ix.GameFilesIn(f, names)
 		}
 	}
-	return map[string]any{"q": q, "path": scope, "kind": kind, "no_list": noList, "folders": folders, "files": files,
+	roots, ls := s.localRoots(ss, ix), listings{}
+	fileItem := func(fe share.FileEntry, h hit) map[string]any {
+		fj := fileJSON(fe)
+		fj["type"] = "file"
+		if d := path.Dir(strings.ReplaceAll(fe.Path, "\\", "/")); d != "." {
+			fj["folder"] = d
+		}
+		fj["system"], fj["label"] = h.system, h.label
+		if st := fileState(ls, roots, fe.Path, fe.Size); st != "" {
+			fj["local"] = st
+		}
+		return fj
+	}
+	folderItem := func(p string, size, count int64, h hit) map[string]any {
+		return map[string]any{"type": "folder", "name": path.Base(p), "path": p, "size": size, "count": count,
+			"local": folderThere(ls, roots, p), "system": h.system}
+	}
+	// in rank order; a game of several files is one item with them all (its parts)
+	items := []map[string]any{}
+	for _, h := range hits {
+		if gf := parts[h.folder][h.file]; len(gf) > 1 {
+			var size int64
+			var ps []map[string]any
+			for _, g := range gf {
+				size += g.Size
+				if g.Folder {
+					ps = append(ps, folderItem(g.Path, g.Size, g.Count, h))
+				} else if fe, _ := ix.File(g.FID); fe != nil {
+					ps = append(ps, fileItem(*fe, h))
+				}
+			}
+			items = append(items, map[string]any{"type": "game", "name": h.name, "system": h.system, "folder": h.folder, "size": size, "parts": ps})
+		} else if fe, _ := ix.FileByPath(h.path); fe != nil {
+			items = append(items, fileItem(*fe, h))
+		} else if d, _ := ix.Dir(h.path); d != nil { // a game kept in a folder of its own
+			items = append(items, folderItem(d.Path, d.Size, d.Count, h))
+		}
+	}
+	return map[string]any{"q": q, "path": scope, "kind": kind, "no_list": noList, "items": items, "folders": []any{}, "files": []any{},
 		"folder_matches": 0, "file_matches": total, "ms": time.Since(t0).Milliseconds()}
 }
 

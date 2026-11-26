@@ -74,7 +74,7 @@ func decodeShareLink(link string) (string, bool) {
 		}
 		return string(data[1:]), true
 	case 1: // v1: [has_key][newsgroup length: 1 byte, or 2 in usnfetch's old reading][newsgroup][u16 len][msgid][16 bytes folder id][32 bytes key]
-		if out, ok := share.DecodeV1(data, true); ok { // a link that fits either layout exactly
+		if out, ok := share.DecodeV1(data, false); ok { // read as the share's own decoder reads it
 			return out, true
 		}
 		hasKey := data[1] != 0

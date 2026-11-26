@@ -1509,13 +1509,18 @@ async function renderShare(s, path) {
   const hideBox = h("input", { type: "checkbox", checked: hideHave, onchange: () => { hideHave = hideBox.checked; store.set("hidehave", hideHave); if (mode === "search") runSearch(); else load(); } });
   let scopeAll = !path || path === loneTop.get(sid);   // at the share's start: search all of it
   const q = h("input", { class: "input", type: "search", placeholder: scopeAll ? "Search this share…" : `Search in ${leaf}…`, autocomplete: "off",
-    oninput: () => schedule(), onkeydown: (ev) => { if (ev.key === "Escape" && q.value) { ev.stopPropagation(); q.value = ""; schedule(0); } } });
+    oninput: () => schedule(), onkeydown: (ev) => {
+      if (ev.key !== "Escape") return;
+      if (q.value) { ev.stopPropagation(); q.value = ""; schedule(0); }                                       // clear the words
+      else if (kindSel.value) { ev.stopPropagation(); kindSel.value = ""; q.placeholder = searchHint(); schedule(0); }   // then back to the folder
+    } });
   // what the search looks for: any file, or one kind (games and BIOS files from the build's own
   // lists, as on the Search page; the rest by file type). With a kind, an empty box lists every
   // one of them here.
   const kindWord = { games: "games", bios: "BIOS files", video: "videos", picture: "pictures", music: "music", document: "documents", archive: "archives" };
   const kindSel = h("select", { class: "input sm", "aria-label": "Search for", title: "What to search for", onchange: () => { q.placeholder = searchHint(); schedule(0); } },
-    [["", "All files"], ...((info.inside || []).length ? [["games", "Games"], ["bios", "BIOS"]] : []),
+    [["", "All files"], ...((info.inside || []).length ? [["games", "Games"]] : []),
+      ...(info.bios_n > 0 || (info.bios_n == null && (info.inside || []).length) ? [["bios", "BIOS"]] : []),
       ["video", "Videos"], ["picture", "Pictures"], ["music", "Music"], ["document", "Documents"], ["archive", "Archives"]].map(([v, l]) => h("option", { value: v }, l)));
   function searchHint() {
     const w = kindWord[kindSel.value];
@@ -1632,11 +1637,25 @@ async function renderShare(s, path) {
     boxes.push({ cb, p, meta, note });
     return cb;
   }
+  // one box for a game of several files (its discs, tracks, regions): ticks or clears them all
+  function selBoxAll(parts) {
+    const cb = h("input", { type: "checkbox", onclick: (ev) => ev.stopPropagation(),
+      onchange: () => { for (const x of parts) cb.checked ? basket.add(s, x.p, x.meta, false) : basket.remove(sid, x.p, false); basket.save(); } });
+    boxes.push({ cb, p: parts[0].p, meta: parts[0].meta, parts });
+    return cb;
+  }
+  const isIn = (p) => basket.coveredBy(sid, p) != null || basket.has(sid, p);
   const toggleSel = (p, meta) => { if (basket.coveredBy(sid, p) != null) return; basket.has(sid, p) ? basket.remove(sid, p) : basket.add(s, p, meta); };
   let drawer = false;
   function refreshSel() {
     const items = basket.items(sid), keys = Object.keys(items);
     for (const b of boxes) {
+      if (b.parts) {   // a game of several files: ticked when all are in, part-ticked when some are
+        const n = b.parts.filter((x) => isIn(x.p)).length;
+        b.cb.checked = n === b.parts.length; b.cb.indeterminate = n > 0 && !b.cb.checked; b.cb.disabled = false; b.cb.title = "";
+        const tr = b.cb.closest("tr"); if (tr) tr.classList.toggle("sel", b.cb.checked);
+        continue;
+      }
       const via = basket.coveredBy(sid, b.p);
       b.cb.checked = via != null || basket.has(sid, b.p);
       b.cb.disabled = via != null;
@@ -1675,7 +1694,7 @@ async function renderShare(s, path) {
       on ? basket.add(s, path, { folder: true, size: lst.t.size, count: lst.t.count }) : basket.remove(sid, path);
       return;
     }
-    for (const b of boxes) if (!b.cb.disabled) on ? basket.add(s, b.p, b.meta, false) : basket.remove(sid, b.p, false);
+    for (const b of boxes) if (!b.cb.disabled) for (const x of b.parts || [{ p: b.p, meta: b.meta }]) on ? basket.add(s, x.p, x.meta, false) : basket.remove(sid, x.p, false);
     basket.save();
   };
   galAll.onchange = () => {
@@ -1735,6 +1754,20 @@ async function renderShare(s, path) {
     if (f.local === "differs") return h("span", { class: "chip bad", title: "Your download folder has a file of this name but another size" }, "differs");
     return null;
   }
+  // a game of several files (discs, tracks, regions) in a Games search: one row, one box for all
+  function gameRow(g) {
+    const parts = g.parts.map((x) => ({ p: x.path, meta: x.type === "folder" ? { folder: true, size: x.size, count: x.count } : { size: x.size } }));
+    const names = g.parts.map((x) => x.name);
+    return h("tr", {},
+      h("td", { class: "cb" }, selBoxAll(parts)),
+      h("td", {}, h("div", { class: "name-cell" }, icon("file"), h("div", { class: "nmwrap" },
+        h("span", { class: "nm" }, g.name), kindChip(g),
+        h("div", { class: "sub", title: names.join("\n") }, `${names.length} files: ${names.slice(0, 3).join(", ")}${names.length > 3 ? ", …" : ""}`),
+        h("a", { class: "sub", href: "#", title: "Open this folder", onclick: (ev) => { ev.preventDefault(); goFolder(g.folder); } }, g.folder)))),
+      h("td", { class: "right nowrap" }, fmtBytes(g.size)),
+      h("td", { class: "nowrap" }, g.parts.every((x) => x.local === "ok" || x.local === true) ? localChip({ local: "ok" }) : null),
+      h("td", { class: "act" }));
+  }
   function fileRow(f, inSearch) {
     const sub = inSearch ? h("a", { class: "sub", href: "#", title: "Open this folder", onclick: (ev) => { ev.preventDefault(); goFolder(f.folder || ""); } }, f.folder || "All files") : null;
     return h("tr", {},
@@ -1767,7 +1800,7 @@ async function renderShare(s, path) {
   const showGallery = () => !!galleryKind && (view === "gallery" || (view == null && (galleryKind === "launchbox" || galleryKind === "es")));
   function setView(v) {
     view = v; store.set("view." + sid, v);
-    if (mode === "search") { q.value = ""; mode = "list"; }
+    if (mode === "search") { q.value = ""; kindSel.value = ""; q.placeholder = searchHint(); mode = "list"; }
     load();
   }
   let gal = { next: 0, truncated: false, shown: 0, matched: 0, hidden: 0 };
@@ -1870,10 +1903,10 @@ async function renderShare(s, path) {
   function schedule(ms = 250) { clearTimeout(timer); timer = setTimeout(runSearch, ms); }
   page.stop.push(() => { clearTimeout(timer); if (ctl) ctl.abort(); });
   async function runSearch() {
-    const text = q.value.trim(), kind = kindSel.value;
+    const raw = q.value.trim(), kind = kindSel.value;
+    const text = kind && raw.length < 2 ? "" : raw;   // a kind: nothing (or one letter) typed lists them all
     if (ctl) ctl.abort();
     if (!kind && text.length < 2) { if (mode !== "list") { mode = "list"; load(); } return; }
-    if (kind && text.length === 1) return;   // a kind: nothing typed lists them all, one letter waits for more
     mode = "search";
     galAllLbl.classList.add("hidden");
     ctl = new AbortController();
@@ -1882,17 +1915,22 @@ async function renderShare(s, path) {
     let r;
     try { r = await api(`/shares/${sid}/search?q=${encodeURIComponent(text)}&path=${encodeURIComponent(scope)}&limit=300&sort=${ssort}&kind=${kind}`, { signal: ctl.signal }); }
     catch (e) { if (e.name === "AbortError") return; if (e.code === "not_open") { route(); return; } fail(e); return; }
-    if (!r || mode !== "search" || q.value.trim() !== text || kindSel.value !== kind) return;
+    if (!r || mode !== "search" || q.value.trim() !== raw || kindSel.value !== kind) return;
     boxes = [];
     listing.classList.remove("hidden"); grid.classList.add("hidden");
     const where = scope ? " in " + leaf : "";
-    const rows = [...r.folders.map((d) => folderRow(d, true)), ...r.files.filter((f) => !(hideHave && f.local === "ok")).map((f) => fileRow(f, true))];
+    // what you already have: a file on disk, a folder there, a game with every file there
+    const have = (x) => x.type === "game" ? x.parts.every(have) : x.type === "folder" ? !!x.local : x.local === "ok";
+    const all = r.items ? r.items : [...r.folders.map((d) => ({ ...d, type: "folder" })), ...r.files.map((f) => ({ ...f, type: "file" }))];
+    const showing = all.filter((x) => !(hideHave && have(x)));
+    const rows = showing.map((x) => x.type === "game" ? gameRow(x) : x.type === "folder" ? folderRow(x, true) : fileRow(x, true));
     if (!rows.length) rows.push(h("tr", {}, h("td", { colspan: 5 }, emptyState(null, null,
-      r.no_list ? `usnfetch hasn't found any ${kindWord[kind]} in this build.`
-        : text ? `Nothing matches “${text}”${where}.` : `No ${kindWord[kind]}${where}.`))));
+      all.length ? "You already have everything that matches here."
+        : r.no_list ? `usnfetch hasn't found any ${kindWord[kind]} in this build.`
+          : text ? `Nothing matches “${text}”${where}.` : `No ${kindWord[kind]}${where}.`))));
     tbody.replaceChildren(...rows);
     const n = (x, w) => `${x.toLocaleString()} ${w}${x === 1 ? "" : "s"}`;
-    const ranked = kind === "games" || kind === "bios", shown = r.files.length + r.folders.length;
+    const ranked = kind === "games" || kind === "bios", shown = all.length;
     put(foot, h("span", {}, kind ? `${n(r.file_matches, kind === "games" ? "game" : kind === "bios" ? "BIOS file" : "file")}${text ? " match" : ""}${where}`
       : `${n(r.file_matches, "file")} and ${n(r.folder_matches, "folder")} match${where}`),
       ranked ? (shown < r.file_matches ? h("span", { class: "muted" }, `showing the best ${shown.toLocaleString()}`) : null)

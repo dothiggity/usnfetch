@@ -279,44 +279,58 @@ type GameFile struct {
 // tracks, regions and revisions (or its folder). name is any of its files, as Game.Name. None
 // when the folder isn't there or has nothing of that game.
 func (ix *Index) GameFiles(folder, name string) ([]GameFile, error) {
-	key := TitleKey(GameTitle(name))
-	d, err := ix.Dir(folder)
-	if err != nil || d == nil || key == "" {
-		return nil, err
+	m, err := ix.GameFilesIn(folder, []string{name})
+	return m[name], err
+}
+
+// GameFilesIn is GameFiles for several games of one system folder, reading the folder once:
+// each game's files by its name as given.
+func (ix *Index) GameFilesIn(folder string, names []string) (map[string][]GameFile, error) {
+	keys := map[string][]string{} // a game's key -> the names asked for with it
+	for _, n := range names {
+		if k := TitleKey(GameTitle(n)); k != "" {
+			keys[k] = append(keys[k], n)
+		}
 	}
-	var out []GameFile
+	out := map[string][]GameFile{}
+	d, err := ix.Dir(folder)
+	if err != nil || d == nil || len(keys) == 0 {
+		return out, err
+	}
 	rows, err := ix.rw.Query("SELECT f.fid, df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	for rows.Next() {
 		var g GameFile
 		var size sql.NullInt64
 		if err := rows.Scan(&g.FID, &g.Name, &g.Path, &size); err != nil {
 			rows.Close()
-			return nil, err
+			return out, err
 		}
-		if g.Size = size.Int64; gameKey(g.Name, false) == key {
-			out = append(out, g)
+		g.Size = size.Int64
+		for _, n := range keys[gameKey(g.Name, false)] {
+			out[n] = append(out[n], g)
 		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return out, err
 	}
 	rows, err = ix.rw.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? ORDER BY name", d.DID)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		g := GameFile{Folder: true}
 		var size, count sql.NullInt64
 		if err := rows.Scan(&g.Name, &g.Path, &size, &count); err != nil {
-			return nil, err
+			return out, err
 		}
-		if g.Size, g.Count = size.Int64, count.Int64; gameKey(g.Name, true) == key {
-			out = append(out, g)
+		g.Size, g.Count = size.Int64, count.Int64
+		for _, n := range keys[gameKey(g.Name, true)] {
+			out[n] = append(out[n], g)
 		}
 	}
 	return out, rows.Err()

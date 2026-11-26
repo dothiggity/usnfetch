@@ -66,28 +66,64 @@ func sortedParts(parts []any) []any {
 	return out
 }
 
-// connPool hands out connections to the index fetchers, re-dialling broken ones.
+// connPool hands out connections to the index fetchers, re-dialling broken ones, at most max
+// of them at once (0: no limit). A fetcher that finds none idle and none to spare waits for
+// one to come back: a big shard streamed while small ones are still being fetched shares the
+// build's connections with them, rather than dialling more than the account allows (those
+// waited out the provider's budget, 45 s, and on a slow line failed the build).
 type connPool struct {
 	dial func() (*nntp.Conn, error)
+	max  int
 	mu   sync.Mutex
+	cond *sync.Cond
 	idle []*nntp.Conn
+	live int // connections out or idle
+}
+
+func newConnPool(dial func() (*nntp.Conn, error), max int) *connPool {
+	p := &connPool{dial: dial, max: max}
+	p.cond = sync.NewCond(&p.mu)
+	return p
 }
 
 func (p *connPool) get() (*nntp.Conn, error) {
 	p.mu.Lock()
-	if n := len(p.idle); n > 0 {
-		c := p.idle[n-1]
-		p.idle = p.idle[:n-1]
-		p.mu.Unlock()
-		return c, nil
+	for {
+		if n := len(p.idle); n > 0 {
+			c := p.idle[n-1]
+			p.idle = p.idle[:n-1]
+			p.mu.Unlock()
+			return c, nil
+		}
+		if p.max <= 0 || p.live < p.max {
+			p.live++
+			p.mu.Unlock()
+			c, err := p.dial()
+			if err != nil {
+				p.mu.Lock()
+				p.live--
+				p.cond.Signal()
+				p.mu.Unlock()
+			}
+			return c, err
+		}
+		p.cond.Wait()
 	}
-	p.mu.Unlock()
-	return p.dial()
 }
 
 func (p *connPool) put(c *nntp.Conn) {
 	p.mu.Lock()
 	p.idle = append(p.idle, c)
+	p.cond.Signal()
+	p.mu.Unlock()
+}
+
+// drop: a broken connection, closed; its place goes to the next fetcher.
+func (p *connPool) drop(c *nntp.Conn) {
+	c.Close()
+	p.mu.Lock()
+	p.live--
+	p.cond.Signal()
 	p.mu.Unlock()
 }
 
@@ -97,7 +133,9 @@ func (p *connPool) close() {
 	for _, c := range p.idle {
 		c.Close()
 	}
+	p.live -= len(p.idle)
 	p.idle = nil
+	p.cond.Broadcast()
 }
 
 // fetch one article with retries on connection trouble (a fresh connection each time).
@@ -115,7 +153,7 @@ func (p *connPool) fetch(msgids []string) ([]byte, error) {
 			p.put(c)
 			return data, err
 		}
-		c.Close()
+		p.drop(c)
 	}
 	return nil, err
 }
@@ -195,7 +233,7 @@ func BuildIndex(m Manifest, key []byte, path string, o BuildOpts) (string, error
 	if o.Conns <= 0 {
 		o.Conns = 8
 	}
-	pool := &connPool{dial: o.Dial}
+	pool := newConnPool(o.Dial, o.Conns)
 	defer pool.close()
 	b, err := NewBuilder(path)
 	if err != nil {
@@ -587,8 +625,10 @@ func buildShards(pool *connPool, shards []any, key []byte, b *Builder, o BuildOp
 			r.docs = nil
 			dispatch()
 		}
-		done += size[i]
-		report(i, 0, base, i == n-1)
+		if firstErr == nil { // (a shard that failed half-way isn't progress, nor 100%)
+			done += size[i]
+			report(i, 0, base, i == n-1)
+		}
 	}
 	stopped.Store(firstErr != nil) // the shards still queued are skipped
 	close(jobs)
