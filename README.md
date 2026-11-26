@@ -20,6 +20,7 @@ you download is up to you.
 - Browse a share before you download it, with a box-art gallery for game builds.
 - Download what you tick, or the whole share. It shows the size and your free space first.
 - Search every build you've opened for a game or a BIOS file.
+- Search inside one build by kind: games, BIOS, videos, pictures, music, documents, archives.
 - Put games straight into RetroBat, Batocera, ES-DE / EmuDeck or LaunchBox, art included.
 - Keep one copy of each game, in the region you want.
 - Keep a catalog of your links: what's in each build, and whether it's still on your provider.
