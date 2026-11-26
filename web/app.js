@@ -1508,20 +1508,24 @@ async function renderShare(s, path) {
   showSort();
   const hideBox = h("input", { type: "checkbox", checked: hideHave, onchange: () => { hideHave = hideBox.checked; store.set("hidehave", hideHave); if (mode === "search") runSearch(); else load(); } });
   let scopeAll = !path || path === loneTop.get(sid);   // at the share's start: search all of it
+  let listAll = false;   // a kind was just picked with the box empty: list every one of them here
   const q = h("input", { class: "input", type: "search", placeholder: scopeAll ? "Search this share…" : `Search in ${leaf}…`, autocomplete: "off",
-    oninput: () => schedule(), onkeydown: (ev) => {
-      if (ev.key !== "Escape") return;
-      if (q.value) { ev.stopPropagation(); q.value = ""; schedule(0); }                                       // clear the words
-      else if (kindSel.value) { ev.stopPropagation(); kindSel.value = ""; q.placeholder = searchHint(); schedule(0); }   // then back to the folder
+    oninput: () => { if (!q.value.trim()) listAll = false; schedule(); }, onkeydown: (ev) => {
+      if (ev.key !== "Escape" || (!q.value && mode !== "search")) return;
+      ev.stopPropagation(); q.value = ""; listAll = false; schedule(0);   // back to the folder
     } });
   // what the search looks for: any file, or one kind (games and BIOS files from the build's own
-  // lists, as on the Search page; the rest by file type). With a kind, an empty box lists every
-  // one of them here.
+  // lists, as on the Search page; the rest by file type). It starts on the last one picked, or
+  // Games when nothing has been: the same search as the Search page, when the build has a game
+  // list. Picking a kind with the box empty lists every one of them here.
   const kindWord = { games: "games", bios: "BIOS files", video: "videos", picture: "pictures", music: "music", document: "documents", archive: "archives" };
-  const kindSel = h("select", { class: "input sm", "aria-label": "Search for", title: "What to search for", onchange: () => { q.placeholder = searchHint(); schedule(0); } },
+  const kindPref = store.get("share.kind", "games");   // one the build doesn't have: All files
+  const kindSel = h("select", { class: "input sm", "aria-label": "Search for", title: "What to search for",
+    onchange: () => { store.set("share.kind", kindSel.value); listAll = !!kindSel.value && !q.value.trim(); q.placeholder = searchHint(); schedule(0); } },
     [["", "All files"], ...((info.inside || []).length ? [["games", "Games"]] : []),
       ...(info.bios_n > 0 || (info.bios_n == null && (info.inside || []).length) ? [["bios", "BIOS"]] : []),
-      ["video", "Videos"], ["picture", "Pictures"], ["music", "Music"], ["document", "Documents"], ["archive", "Archives"]].map(([v, l]) => h("option", { value: v }, l)));
+      ["video", "Videos"], ["picture", "Pictures"], ["music", "Music"], ["document", "Documents"], ["archive", "Archives"]].map(([v, l]) => h("option", { value: v, selected: v === kindPref }, l)));
+  q.placeholder = searchHint();
   function searchHint() {
     const w = kindWord[kindSel.value];
     return w ? `Search ${w} in ${scopeAll ? "this share" : leaf}…` : scopeAll ? "Search this share…" : `Search in ${leaf}…`;
@@ -1800,7 +1804,7 @@ async function renderShare(s, path) {
   const showGallery = () => !!galleryKind && (view === "gallery" || (view == null && (galleryKind === "launchbox" || galleryKind === "es")));
   function setView(v) {
     view = v; store.set("view." + sid, v);
-    if (mode === "search") { q.value = ""; kindSel.value = ""; q.placeholder = searchHint(); mode = "list"; }
+    if (mode === "search") { q.value = ""; listAll = false; mode = "list"; }
     load();
   }
   let gal = { next: 0, truncated: false, shown: 0, matched: 0, hidden: 0 };
@@ -1904,9 +1908,9 @@ async function renderShare(s, path) {
   page.stop.push(() => { clearTimeout(timer); if (ctl) ctl.abort(); });
   async function runSearch() {
     const raw = q.value.trim(), kind = kindSel.value;
-    const text = kind && raw.length < 2 ? "" : raw;   // a kind: nothing (or one letter) typed lists them all
+    const text = raw.length < 2 ? "" : raw;   // one letter: not yet a search
     if (ctl) ctl.abort();
-    if (!kind && text.length < 2) { if (mode !== "list") { mode = "list"; load(); } return; }
+    if (!text && !(kind && listAll)) { if (mode !== "list") { mode = "list"; load(); } return; }
     mode = "search";
     galAllLbl.classList.add("hidden");
     ctl = new AbortController();
@@ -1924,10 +1928,13 @@ async function renderShare(s, path) {
     const all = r.items ? r.items : [...r.folders.map((d) => ({ ...d, type: "folder" })), ...r.files.map((f) => ({ ...f, type: "file" }))];
     const showing = all.filter((x) => !(hideHave && have(x)));
     const rows = showing.map((x) => x.type === "game" ? gameRow(x) : x.type === "folder" ? folderRow(x, true) : fileRow(x, true));
+    // the same words in every file: a manual or a video isn't in the game list
+    const allFiles = (t) => h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); kindSel.value = ""; listAll = false; q.placeholder = searchHint(); runSearch(); } }, t);
     if (!rows.length) rows.push(h("tr", {}, h("td", { colspan: 5 }, emptyState(null, null,
       all.length ? "You already have everything that matches here."
         : r.no_list ? `usnfetch hasn't found any ${kindWord[kind]} in this build.`
-          : text ? `Nothing matches “${text}”${where}.` : `No ${kindWord[kind]}${where}.`))));
+          : text ? (kind ? `No ${kindWord[kind]} ${kind === "music" ? "matches" : "match"} “${text}”${where}.` : `Nothing matches “${text}”${where}.`) : `No ${kindWord[kind]}${where}.`,
+      kind && text && !all.length ? allFiles("Look in all files") : null))));
     tbody.replaceChildren(...rows);
     const n = (x, w) => `${x.toLocaleString()} ${w}${x === 1 ? "" : "s"}`;
     const ranked = kind === "games" || kind === "bios", shown = all.length;
@@ -1936,6 +1943,7 @@ async function renderShare(s, path) {
       ranked ? (shown < r.file_matches ? h("span", { class: "muted" }, `showing the best ${shown.toLocaleString()}`) : null)
         : r.files.length < r.file_matches || r.folders.length < r.folder_matches ? h("span", { class: "muted" }, ssort === "name" ? "showing the first ones by path: add words to narrow it down" : "showing the largest / smallest of the matches") : null,
       scope ? h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); scopeAll = true; q.placeholder = searchHint(); runSearch(); } }, "search the whole share") : null,
+      kind && text && all.length ? allFiles("look in all files") : null,
       h("span", { class: "faint" }, `${r.ms} ms`));
     refreshSel();
   }
