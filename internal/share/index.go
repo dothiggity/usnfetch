@@ -421,8 +421,10 @@ type Index struct {
 	FileCount   int64
 	HasPool     bool           // the per-article data is here (false: the file list only, see cache.go)
 	Info        map[string]any // manifest facts (set by LoadShare)
-	rw          *sql.DB        // writes and anything that changes after open
+	db          *sql.DB        // reads of anything that changes after open (read only: see writer)
 	ro          *sql.DB        // immutable read-only connections for the hot path
+	w           *sql.DB        // writes, opened on the first one (writer)
+	wmu         sync.Mutex
 	mu          sync.Mutex
 	files       []FileEntry
 	dc          *dirCache   // folder paths for search (search.go), loaded on first use
@@ -437,37 +439,34 @@ func OpenIndex(path string, key []byte) (*Index, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	rw, err := sql.Open("sqlite", sqliteURI(path, "mode=rw&_pragma=busy_timeout(30000)"))
+	// read only: opening it for writing makes Windows unpack a file the cache has compressed
+	// (compress_windows.go), seconds for a big one, and browsing never writes
+	db, err := sql.Open("sqlite", sqliteURI(path, "mode=ro&_pragma=busy_timeout(30000)"))
 	if err != nil {
 		return nil, err
 	}
-	rw.SetMaxOpenConns(1)
-	meta := map[string]any{}
-	rows, err := rw.Query("SELECT k, v FROM meta")
-	if err != nil {
-		rw.Close()
-		return nil, errIndex
+	db.SetMaxOpenConns(1)
+	meta, err := readMeta(db)
+	if err != nil { // a write cut short (a crash) leaves a journal only a writable connection undoes
+		if w, werr := sql.Open("sqlite", sqliteURI(path, "mode=rw&_pragma=busy_timeout(30000)")); werr == nil {
+			_, _ = readMeta(w)
+			w.Close()
+			meta, err = readMeta(db)
+		}
 	}
-	for rows.Next() {
-		var k string
-		var v any
-		_ = rows.Scan(&k, &v)
-		meta[k] = v
-	}
-	rows.Close()
-	if num(meta["schema"]) != SchemaVersion || num(meta["complete"]) == 0 {
-		rw.Close()
+	if err != nil || num(meta["schema"]) != SchemaVersion || num(meta["complete"]) == 0 {
+		db.Close()
 		return nil, errIndex
 	}
 	ro, err := sql.Open("sqlite", sqliteURI(path, "mode=ro&immutable=1"))
 	if err != nil {
-		rw.Close()
+		db.Close()
 		return nil, err
 	}
 	ro.SetMaxOpenConns(64)
 	ro.SetMaxIdleConns(64)
 	_, hasPool := meta["pool"]
-	ix := &Index{Path: path, Key: key, rw: rw, ro: ro, Info: map[string]any{}, HasPool: !hasPool || num(meta["pool"]) != 0}
+	ix := &Index{Path: path, Key: key, db: db, ro: ro, Info: map[string]any{}, HasPool: !hasPool || num(meta["pool"]) != 0}
 	markOpen(path, 1)
 	ix.SegmentSize = num(meta["segment_size"])
 	if ix.SegmentSize == 0 {
@@ -475,6 +474,40 @@ func OpenIndex(path string, key []byte) (*Index, error) {
 	}
 	ix.PoolCount, ix.FileCount = num(meta["pool_count"]), num(meta["file_count"])
 	return ix, nil
+}
+
+func readMeta(db *sql.DB) (map[string]any, error) {
+	rows, err := db.Query("SELECT k, v FROM meta")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	meta := map[string]any{}
+	for rows.Next() {
+		var k string
+		var v any
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		meta[k] = v
+	}
+	return meta, rows.Err()
+}
+
+// writer: the connection for the few writes (a file's layout when it's first fetched, the
+// folder tree when it's first built), opened when the first one comes.
+func (ix *Index) writer() (*sql.DB, error) {
+	ix.wmu.Lock()
+	defer ix.wmu.Unlock()
+	if ix.w == nil {
+		w, err := sql.Open("sqlite", sqliteURI(ix.Path, "mode=rw&_pragma=busy_timeout(30000)"))
+		if err != nil {
+			return nil, err
+		}
+		w.SetMaxOpenConns(1)
+		ix.w = w
+	}
+	return ix.w, nil
 }
 
 // Usable: the file exists and is a complete index of this schema.
@@ -492,7 +525,12 @@ func (ix *Index) Close() {
 		ix.sdb.Close()
 	}
 	ix.ro.Close()
-	ix.rw.Close()
+	ix.db.Close()
+	ix.wmu.Lock()
+	if ix.w != nil {
+		ix.w.Close()
+	}
+	ix.wmu.Unlock()
 	markOpen(ix.Path, -1)
 }
 
@@ -525,7 +563,7 @@ func scanFile(sc interface{ Scan(...any) error }) (FileEntry, error) {
 // looks at all of them but keeps only what it picked: loading a share of 2.7 million
 // files whole (Files) took 1-2 GB for as long as the job ran.
 func (ix *Index) EachFile(fn func(FileEntry) error) error {
-	rows, err := ix.rw.Query("SELECT " + fileCols + " FROM files ORDER BY fid")
+	rows, err := ix.db.Query("SELECT " + fileCols + " FROM files ORDER BY fid")
 	if err != nil {
 		return err
 	}
@@ -550,7 +588,7 @@ func (ix *Index) Files() ([]FileEntry, error) {
 	if ix.files != nil {
 		return ix.files, nil
 	}
-	rows, err := ix.rw.Query("SELECT " + fileCols + " FROM files ORDER BY fid")
+	rows, err := ix.db.Query("SELECT " + fileCols + " FROM files ORDER BY fid")
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +607,7 @@ func (ix *Index) Files() ([]FileEntry, error) {
 
 // File by fid / path.
 func (ix *Index) File(fid int64) (*FileEntry, error) {
-	f, err := scanFile(ix.rw.QueryRow("SELECT "+fileCols+" FROM files WHERE fid = ?", fid))
+	f, err := scanFile(ix.db.QueryRow("SELECT "+fileCols+" FROM files WHERE fid = ?", fid))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -588,7 +626,7 @@ func (ix *Index) FileByPath(path string) (*FileEntry, error) {
 			dir, name = norm[:i], norm[i+1:]
 		}
 		var fid int64
-		err := ix.rw.QueryRow("SELECT df.fid FROM dirs d JOIN dir_files df ON df.did = d.did WHERE d.path = ? AND df.name = ?", dir, name).Scan(&fid)
+		err := ix.db.QueryRow("SELECT df.fid FROM dirs d JOIN dir_files df ON df.did = d.did WHERE d.path = ? AND df.name = ?", dir, name).Scan(&fid)
 		if err == sql.ErrNoRows {
 			return nil, nil // the tree has every file there's data for (what browsing shows)
 		}
@@ -597,9 +635,9 @@ func (ix *Index) FileByPath(path string) (*FileEntry, error) {
 		}
 		return ix.File(fid)
 	}
-	f, err := scanFile(ix.rw.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", path))
+	f, err := scanFile(ix.db.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", path))
 	if err == sql.ErrNoRows && strings.Contains(path, "/") { // named the folder tree's way: the share's may use \
-		f, err = scanFile(ix.rw.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", strings.ReplaceAll(path, "/", `\`)))
+		f, err = scanFile(ix.db.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", strings.ReplaceAll(path, "/", `\`)))
 	}
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -613,7 +651,7 @@ func (ix *Index) hasTree() bool {
 		return true
 	}
 	var one int
-	if ix.rw.QueryRow("SELECT 1 FROM meta WHERE k = 'tree'").Scan(&one) == nil {
+	if ix.db.QueryRow("SELECT 1 FROM meta WHERE k = 'tree'").Scan(&one) == nil {
 		ix.tree.Store(true)
 		return true
 	}
@@ -640,7 +678,7 @@ func (ix *Index) Plan(fe FileEntry) (*Plan, error) {
 		return nil, ErrNoDownloadData
 	}
 	var layout sql.NullInt64
-	if err := ix.rw.QueryRow("SELECT layout FROM files WHERE fid = ?", fe.FID).Scan(&layout); err != nil {
+	if err := ix.db.QueryRow("SELECT layout FROM files WHERE fid = ?", fe.FID).Scan(&layout); err != nil {
 		return nil, err
 	}
 	l := int(layout.Int64)
@@ -660,11 +698,11 @@ func (ix *Index) settleLayout(fe *FileEntry) (int, error) {
 	if fe.SegRange != nil {
 		start, stride := fe.SegRange[0], fe.SegRange[1]
 		last := start + stride*(n-1)
-		err = ix.rw.QueryRow(`SELECT COUNT(*), COALESCE(SUM(idx < ? AND size NOT IN (0, ?)), 0), COALESCE(MAX(CASE WHEN idx = ? THEN size END), 0)
+		err = ix.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(idx < ? AND size NOT IN (0, ?)), 0), COALESCE(MAX(CASE WHEN idx = ? THEN size END), 0)
 			FROM pool WHERE idx BETWEEN ? AND ? AND (idx - ?) % ? = 0 AND ref IS NULL AND msgid IS NOT NULL`,
 			last, ss, last, start, last, start, stride).Scan(&cnt, &odd, &tail)
 	} else {
-		err = ix.rw.QueryRow(`SELECT COUNT(*), COALESCE(SUM(fs.seg < ? AND p.size NOT IN (0, ?)), 0), COALESCE(MAX(CASE WHEN fs.seg = ? THEN p.size END), 0)
+		err = ix.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(fs.seg < ? AND p.size NOT IN (0, ?)), 0), COALESCE(MAX(CASE WHEN fs.seg = ? THEN p.size END), 0)
 			FROM file_segs fs JOIN pool p ON p.idx = fs.idx WHERE fs.fid = ? AND p.ref IS NULL AND p.msgid IS NOT NULL`,
 			n-1, ss, n-1, fe.FID).Scan(&cnt, &odd, &tail)
 	}
@@ -681,7 +719,11 @@ func (ix *Index) settleLayout(fe *FileEntry) (int, error) {
 	} else if err := ix.buildOffsets(fe); err != nil {
 		return 0, err
 	}
-	_, err = ix.rw.Exec("UPDATE files SET layout = ?, size = ? WHERE fid = ?", layout, fe.Size, fe.FID)
+	w, err := ix.writer()
+	if err != nil {
+		return 0, err
+	}
+	_, err = w.Exec("UPDATE files SET layout = ?, size = ? WHERE fid = ?", layout, fe.Size, fe.FID)
 	return layout, err
 }
 
@@ -691,10 +733,10 @@ func (ix *Index) buildOffsets(fe *FileEntry) error {
 	var err error
 	if fe.SegRange != nil {
 		start, stride, n := fe.SegRange[0], fe.SegRange[1], fe.SegRange[2]
-		rows, err = ix.rw.Query("SELECT idx, size FROM pool WHERE idx BETWEEN ? AND ? AND (idx - ?) % ? = 0 AND ref IS NULL ORDER BY idx",
+		rows, err = ix.db.Query("SELECT idx, size FROM pool WHERE idx BETWEEN ? AND ? AND (idx - ?) % ? = 0 AND ref IS NULL ORDER BY idx",
 			start, start+stride*(n-1), start, stride)
 	} else {
-		rows, err = ix.rw.Query("SELECT p.idx, p.size FROM file_segs fs JOIN pool p ON p.idx = fs.idx WHERE fs.fid = ? ORDER BY fs.seg", fe.FID)
+		rows, err = ix.db.Query("SELECT p.idx, p.size FROM file_segs fs JOIN pool p ON p.idx = fs.idx WHERE fs.fid = ? ORDER BY fs.seg", fe.FID)
 	}
 	if err != nil {
 		return err
@@ -712,7 +754,11 @@ func (ix *Index) buildOffsets(fe *FileEntry) error {
 		all = append(all, r)
 	}
 	rows.Close()
-	tx, err := ix.rw.Begin()
+	w, err := ix.writer()
+	if err != nil {
+		return err
+	}
+	tx, err := w.Begin()
 	if err != nil {
 		return err
 	}
@@ -753,7 +799,7 @@ func (ix *Index) Segment(p *Plan, i int64) (Segment, error) {
 		if i == n-1 {
 			size = fe.Size - off
 		}
-	} else if err := ix.rw.QueryRow("SELECT idx, off, size FROM file_offs WHERE fid = ? AND seg = ?", fe.FID, i).Scan(&idx, &off, &size); err != nil {
+	} else if err := ix.db.QueryRow("SELECT idx, off, size FROM file_offs WHERE fid = ? AND seg = ?", fe.FID, i).Scan(&idx, &off, &size); err != nil {
 		return Segment{}, err
 	}
 	seg, err := ix.poolSegment(idx)
@@ -844,7 +890,7 @@ func (ix *Index) SegmentAt(p *Plan, off int64) (int64, error) {
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
 		var o int64
-		if err := ix.rw.QueryRow("SELECT off FROM file_offs WHERE fid = ? AND seg = ?", p.File.FID, mid).Scan(&o); err != nil {
+		if err := ix.db.QueryRow("SELECT off FROM file_offs WHERE fid = ? AND seg = ?", p.File.FID, mid).Scan(&o); err != nil {
 			return 0, err
 		}
 		if o <= off {
@@ -866,7 +912,7 @@ func (ix *Index) DoneBytes(p *Plan, isDone func(int64) bool, done int64) int64 {
 		}
 		return b
 	}
-	rows, err := ix.rw.Query("SELECT seg, size FROM file_offs WHERE fid = ?", fe.FID)
+	rows, err := ix.db.Query("SELECT seg, size FROM file_offs WHERE fid = ?", fe.FID)
 	if err != nil {
 		return 0
 	}
@@ -885,13 +931,13 @@ func (ix *Index) DoneBytes(p *Plan, isDone func(int64) bool, done int64) int64 {
 // TotalSegments of all segmented files.
 func (ix *Index) TotalSegments() (int64, error) {
 	var n int64
-	err := ix.rw.QueryRow("SELECT COALESCE(SUM(count), 0) FROM files WHERE count > 0").Scan(&n)
+	err := ix.db.QueryRow("SELECT COALESCE(SUM(count), 0) FROM files WHERE count > 0").Scan(&n)
 	return n, err
 }
 
 // IterSegmentedFiles calls fn for each file with segments, in fid order, until it returns false.
 func (ix *Index) IterSegmentedFiles(fn func(FileEntry) bool) error {
-	rows, err := ix.rw.Query("SELECT " + fileCols + " FROM files WHERE count > 0 ORDER BY fid")
+	rows, err := ix.db.Query("SELECT " + fileCols + " FROM files WHERE count > 0 ORDER BY fid")
 	if err != nil {
 		return err
 	}
@@ -921,7 +967,7 @@ func (ix *Index) EnsureTree(log func(string)) error {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 	var one int
-	if err := ix.rw.QueryRow("SELECT 1 FROM meta WHERE k = 'tree'").Scan(&one); err == nil {
+	if err := ix.db.QueryRow("SELECT 1 FROM meta WHERE k = 'tree'").Scan(&one); err == nil {
 		return nil
 	}
 	t0 := time.Now()
@@ -932,7 +978,7 @@ func (ix *Index) EnsureTree(log func(string)) error {
 	}
 	dirs := map[string]int64{"": 0}
 	all := []*dir{{did: 0, parent: -1}}
-	rows, err := ix.rw.Query("SELECT fid, path, size FROM files WHERE (count > 0 OR pid IS NOT NULL OR size = 0)")
+	rows, err := ix.db.Query("SELECT fid, path, size FROM files WHERE (count > 0 OR pid IS NOT NULL OR size = 0)")
 	if err != nil {
 		return err
 	}
@@ -973,7 +1019,11 @@ func (ix *Index) EnsureTree(log func(string)) error {
 		files = append(files, df{did, parts[len(parts)-1], fid})
 	}
 	rows.Close()
-	tx, err := ix.rw.Begin()
+	w, err := ix.writer()
+	if err != nil {
+		return err
+	}
+	tx, err := w.Begin()
 	if err != nil {
 		return err
 	}
@@ -1050,11 +1100,11 @@ type TreeSummary struct {
 func (ix *Index) Summary() (TreeSummary, error) {
 	var s TreeSummary
 	var rootFiles int64
-	if err := ix.rw.QueryRow("SELECT size, count, nfiles FROM dirs WHERE did = 0").Scan(&s.Size, &s.Files, &rootFiles); err != nil {
+	if err := ix.db.QueryRow("SELECT size, count, nfiles FROM dirs WHERE did = 0").Scan(&s.Size, &s.Files, &rootFiles); err != nil {
 		return s, err
 	}
 	var tops []string
-	rows, err := ix.rw.Query("SELECT name FROM dirs WHERE parent = 0 LIMIT 2")
+	rows, err := ix.db.Query("SELECT name FROM dirs WHERE parent = 0 LIMIT 2")
 	if err == nil {
 		for rows.Next() {
 			var n string
@@ -1066,7 +1116,7 @@ func (ix *Index) Summary() (TreeSummary, error) {
 	if len(tops) == 1 && rootFiles == 0 {
 		s.Name = tops[0]
 	} else if s.Files == 1 {
-		_ = ix.rw.QueryRow("SELECT name FROM dir_files WHERE did = 0 LIMIT 1").Scan(&s.Name)
+		_ = ix.db.QueryRow("SELECT name FROM dir_files WHERE did = 0 LIMIT 1").Scan(&s.Name)
 	}
 	return s, nil
 }
@@ -1075,7 +1125,7 @@ func (ix *Index) Summary() (TreeSummary, error) {
 // (most of a second on a share of millions), so callers keep the answer.
 func (ix *Index) PackedFiles() int64 {
 	var n int64
-	_ = ix.rw.QueryRow("SELECT COUNT(*) FROM files WHERE pid IS NOT NULL").Scan(&n)
+	_ = ix.db.QueryRow("SELECT COUNT(*) FROM files WHERE pid IS NOT NULL").Scan(&n)
 	return n
 }
 
@@ -1101,7 +1151,7 @@ func normDir(path string) string {
 
 func (ix *Index) Dir(path string) (*DirInfo, error) {
 	d := DirInfo{Path: normDir(path)}
-	err := ix.rw.QueryRow("SELECT did, size, count, nfiles FROM dirs WHERE path = ?", d.Path).Scan(&d.DID, &d.Size, &d.Count, &d.NFiles)
+	err := ix.db.QueryRow("SELECT did, size, count, nfiles FROM dirs WHERE path = ?", d.Path).Scan(&d.DID, &d.Size, &d.Count, &d.NFiles)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1144,7 +1194,7 @@ func (ix *Index) ListDir(path string, offset, limit int, sortBy string) (*DirInf
 		return nil, nil, nil, err
 	}
 	folders := []Folder{}
-	rows, err := ix.rw.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? AND did != 0", d.DID)
+	rows, err := ix.db.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? AND did != 0", d.DID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1166,7 +1216,7 @@ func (ix *Index) ListDir(path string, offset, limit int, sortBy string) (*DirInf
 	for _, c := range strings.Split(fileCols, ",") {
 		cols = append(cols, "f."+strings.TrimSpace(c))
 	}
-	frows, err := ix.rw.Query("SELECT "+strings.Join(cols, ", ")+" FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY "+order+" LIMIT ? OFFSET ?",
+	frows, err := ix.db.Query("SELECT "+strings.Join(cols, ", ")+" FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY "+order+" LIMIT ? OFFSET ?",
 		d.DID, limit, offset)
 	if err != nil {
 		return nil, nil, nil, err

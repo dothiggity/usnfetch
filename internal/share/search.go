@@ -407,13 +407,13 @@ func (ix *Index) ArchiveNames(ctx context.Context, folders []string) (map[string
 // TopFolder: the share's single top-level folder when every file lives inside it, else "".
 func (ix *Index) TopFolder() (string, error) {
 	var rootFiles int64
-	if err := ix.rw.QueryRow("SELECT nfiles FROM dirs WHERE did = 0").Scan(&rootFiles); err != nil {
+	if err := ix.db.QueryRow("SELECT nfiles FROM dirs WHERE did = 0").Scan(&rootFiles); err != nil {
 		return "", err
 	}
 	if rootFiles > 0 {
 		return "", nil
 	}
-	rows, err := ix.rw.Query("SELECT name FROM dirs WHERE parent = 0 AND did != 0 LIMIT 2")
+	rows, err := ix.db.Query("SELECT name FROM dirs WHERE parent = 0 AND did != 0 LIMIT 2")
 	if err != nil {
 		return "", err
 	}

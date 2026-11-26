@@ -297,7 +297,7 @@ func (ix *Index) GameFilesIn(folder string, names []string) (map[string][]GameFi
 	if err != nil || d == nil || len(keys) == 0 {
 		return out, err
 	}
-	rows, err := ix.rw.Query("SELECT f.fid, df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
+	rows, err := ix.db.Query("SELECT f.fid, df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
 	if err != nil {
 		return out, err
 	}
@@ -317,7 +317,7 @@ func (ix *Index) GameFilesIn(folder string, names []string) (map[string][]GameFi
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
-	rows, err = ix.rw.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? ORDER BY name", d.DID)
+	rows, err = ix.db.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? ORDER BY name", d.DID)
 	if err != nil {
 		return out, err
 	}
@@ -347,7 +347,7 @@ func (ix *Index) Inside() ([]System, error) {
 
 // Games: the build's systems (as Inside) and every game in them.
 func (ix *Index) Games() ([]System, []Game, error) {
-	rows, err := ix.rw.Query("SELECT did, count FROM dirs WHERE lower(name) IN ('roms', 'games') AND did != 0")
+	rows, err := ix.db.Query("SELECT did, count FROM dirs WHERE lower(name) IN ('roms', 'games') AND did != 0")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -361,7 +361,7 @@ func (ix *Index) Games() ([]System, []Game, error) {
 	rows.Close()
 	root, most := int64(-1), int64(-1)
 	for _, c := range cands {
-		r, err := ix.rw.Query("SELECT name FROM dirs WHERE parent = ?", c.did)
+		r, err := ix.db.Query("SELECT name FROM dirs WHERE parent = ?", c.did)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -389,7 +389,7 @@ func (ix *Index) Games() ([]System, []Game, error) {
 		name, path string
 	}
 	var systems []dir
-	rows, err = ix.rw.Query("SELECT did, name, path FROM dirs WHERE parent = ?", root)
+	rows, err = ix.db.Query("SELECT did, name, path FROM dirs WHERE parent = ?", root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -400,7 +400,7 @@ func (ix *Index) Games() ([]System, []Game, error) {
 	}
 	rows.Close()
 	entries := func(q string, did int64) ([]entry, error) {
-		r, err := ix.rw.Query(q, did)
+		r, err := ix.db.Query(q, did)
 		if err != nil {
 			return nil, err
 		}

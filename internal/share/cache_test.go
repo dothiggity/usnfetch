@@ -124,7 +124,7 @@ func checkFullIndex(t *testing.T, ix *Index) {
 		t.Errorf("copies of a segment: %v", s.Msgids)
 	}
 	var n int
-	ix.rw.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('pack_files', 'files_file_id')").Scan(&n)
+	ix.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('pack_files', 'files_file_id')").Scan(&n)
 	if n != 0 {
 		t.Error("the build's linking tables are in the index")
 	}

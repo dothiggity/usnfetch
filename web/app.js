@@ -456,7 +456,12 @@ function sharePhase(s) {
   if (/articles fetched|shard \d+\/\d+/.test(l)) return { text: "Downloading its index", pct: pct ?? 0 };
   if (/^core index: \d+ (shards|part)/.test(l)) return { text: "Downloading its index", pct: 0 };
   if (/converting/.test(l)) return { text: "Updating its saved index (only this once)" };
-  if (/indexed in|pool entries|cached in|saved file list|unzipped/.test(l)) return { text: "Sorting out its folders" };
+  if (/cached in|saved file list/.test(l)) return { text: "Opening its saved index" };
+  // after a saved index, only what's in it is left to work out (games, BIOS files), and only
+  // the first time; after a fresh one, its folders are sorted out first
+  const saved = () => s.log.some((x) => /cached in|saved file list/.test(x));   // only with a line in l: s.log has it
+  if (/indexed in|pool entries/.test(l)) return { text: saved() ? "Working out what's in it" : "Sorting out its folders" };
+  if (/folder tree:/.test(l)) return { text: "Working out what's in it" };
   if (/^share:|^signature:/.test(l)) return { text: "Checking who shared it" };
   if (/checking availability/.test(l)) return { text: "Nearly there" };
   return { text: "Finding the share on Usenet" };

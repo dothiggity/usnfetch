@@ -50,7 +50,7 @@ func (ix *Index) Bioses() ([]Bios, error) {
 		count      int64
 	}
 	query := func(q string, args ...any) ([]dir, error) {
-		rows, err := ix.rw.Query(q, args...)
+		rows, err := ix.db.Query(q, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func (ix *Index) Bioses() ([]Bios, error) {
 	var out []Bios
 	var walk func(d dir, where string) error
 	walk = func(d dir, where string) error {
-		rows, err := ix.rw.Query("SELECT df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.did)
+		rows, err := ix.db.Query("SELECT df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.did)
 		if err != nil {
 			return err
 		}

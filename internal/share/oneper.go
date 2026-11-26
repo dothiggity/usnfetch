@@ -147,7 +147,7 @@ func (ix *Index) OnePerGame(folder string, prefer []string) ([]GameFile, int, er
 		}
 		groups[k] = append(groups[k], g)
 	}
-	rows, err := ix.rw.Query("SELECT f.fid, df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
+	rows, err := ix.db.Query("SELECT f.fid, df.name, f.path, f.size FROM dir_files df JOIN files f ON f.fid = df.fid WHERE df.did = ? ORDER BY df.name", d.DID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -165,7 +165,7 @@ func (ix *Index) OnePerGame(folder string, prefer []string) ([]GameFile, int, er
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	drows, err := ix.rw.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? ORDER BY name", d.DID)
+	drows, err := ix.db.Query("SELECT name, path, size, count FROM dirs WHERE parent = ? ORDER BY name", d.DID)
 	if err != nil {
 		return nil, 0, err
 	}
