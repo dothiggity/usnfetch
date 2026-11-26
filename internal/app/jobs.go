@@ -93,6 +93,7 @@ type Job struct {
 	holdStop    bool         // paused on its own: waits in the queue, as "paused", until resumed
 	moved       int64        // bytes its finished tasks moved this run (setTask): its speed goes by these
 	seen        []byteSample // what it had moved, as it's looked at while downloading (jobRate)
+	meter       *share.Meter // fetching the share's index (before planning): how far
 }
 
 // addBytes: more of the job is done (a file finished, or found already there).
@@ -269,6 +270,14 @@ type JobView struct {
 	ExtractMode string         `json:"extract_mode,omitempty"`
 	Warnings    []string       `json:"warnings,omitempty"`
 	Picked      string         `json:"picked,omitempty"`
+	Index       *IndexProgress `json:"index,omitempty"` // fetching the share's index first: how far
+}
+
+// IndexProgress: how far fetching a share's index is: bytes of it of the total, and how fast.
+type IndexProgress struct {
+	Done  int64 `json:"done"`
+	Total int64 `json:"total"`
+	Rate  int64 `json:"rate"`
 }
 
 func (j *Job) View(full bool) JobView {
@@ -302,6 +311,11 @@ func (j *Job) View(full bool) JobView {
 		v.Rate = j.jobRate(j.moved, 0)
 	} else {
 		j.seen = j.seen[:0]
+	}
+	if j.meter != nil {
+		if done, total, bps := j.meter.Progress(); total > 0 {
+			v.Index, v.Rate = &IndexProgress{done, total, bps}, float64(bps)
+		}
 	}
 	if full {
 		v.Files, v.FileSel, v.Result = j.Files, j.FileSel, j.Result
@@ -953,7 +967,14 @@ func (m *Manager) run(j *Job) {
 		m.finish(j, "failed", "RuntimeError: "+err.Error())
 		return
 	}
-	ix, err := share.LoadShare(j.Link, share.LoadOpts{Accounts: accts.All(), Password: j.Password, IndexDir: m.IndexDir(), Log: m.Log})
+	meter := &share.Meter{} // a share whose index isn't saved fetches it first: the status bar shows how far
+	j.mu.Lock()
+	j.meter = meter
+	j.mu.Unlock()
+	ix, err := share.LoadShare(j.Link, share.LoadOpts{Accounts: accts.All(), Password: j.Password, IndexDir: m.IndexDir(), Log: m.Log, Meter: meter})
+	j.mu.Lock()
+	j.meter = nil
+	j.mu.Unlock()
 	if err != nil {
 		if errors.Is(err, share.ErrPassword) {
 			m.finish(j, "failed", "this share is password protected: set the share password on the job")

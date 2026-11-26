@@ -188,13 +188,16 @@ func TestBuildBigShards(t *testing.T) {
 	progressEvery = 0 // every step logs how far it is
 	t.Cleanup(func() { progressEvery = 4 * time.Second })
 	var pcts []int
+	var written []int64 // the meter's bytes written, at each progress line
+	meter := &Meter{}
 	logf := func(l string) {
 		if mm := regexp.MustCompile(`\((\d+)%\)`).FindStringSubmatch(l); mm != nil {
 			p, _ := strconv.Atoi(mm[1])
 			pcts = append(pcts, p)
+			written = append(written, meter.done.Load())
 		}
 	}
-	_, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: 8, Log: logf})
+	_, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: 8, Log: logf, Meter: meter})
 	close(done)
 	wg.Wait()
 	if err != nil {
@@ -203,6 +206,19 @@ func TestBuildBigShards(t *testing.T) {
 	// one figure for the whole index, so the progress bar only goes up (and reaches 100 at the end)
 	if len(pcts) < 10 || slices.Index(pcts, 100) != len(pcts)-1 || !slices.IsSorted(pcts) {
 		t.Errorf("progress went %v", pcts)
+	}
+	// the meter: bytes written of the index's size, only going up, all of it at the end; and
+	// every article's bytes as they arrived (the speed)
+	var size int64
+	for _, sh := range m.List("shards") {
+		size += shardBytes(sh.(map[string]any))
+	}
+	wrote, total, _ := meter.Progress()
+	if total != size || wrote != size || !slices.IsSorted(written) || written[0] >= size {
+		t.Errorf("meter: %d of %d written (index %d bytes), along the way %v", wrote, total, size, written)
+	}
+	if got := meter.got.Load(); got < size*9/10 {
+		t.Errorf("meter: %d bytes arrived of %d", got, size)
 	}
 	grew := int64(peak.Load()) - int64(base.HeapInuse)
 	t.Logf("peak heap during the build: +%d MB", grew>>20)
@@ -282,5 +298,31 @@ func TestBuildShardsConnectionCap(t *testing.T) {
 		if fe, err := ix.FileByPath(p); err != nil || fe == nil {
 			t.Errorf("%s: %v, %v", p, fe, err)
 		}
+	}
+}
+
+// An index in one piece (one shard here, the way a v3/v4 index comes too) tells the meter
+// as its articles are written.
+func TestBuildOnePieceMeter(t *testing.T) {
+	key := bytes.Repeat([]byte{7}, 32)
+	m, _, arts := shardedShare(t, key, []int{60000}) // a few MB: several articles
+	sh := m.List("shards")[0].(map[string]any)
+	if len(sh["parts"].([]any)) < 3 {
+		t.Fatalf("%d articles: the test needs several", len(sh["parts"].([]any)))
+	}
+	acc, _ := articleServer(t, arts, 0)
+	meter := &Meter{}
+	var seen []int64
+	path := filepath.Join(t.TempDir(), "x.usnindex")
+	progressEvery = 0
+	t.Cleanup(func() { progressEvery = 4 * time.Second })
+	_, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: 2, Meter: meter,
+		Log: func(string) { seen = append(seen, meter.done.Load()) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrote, total, _ := meter.Progress()
+	if size := shardBytes(sh); total != size || wrote != size || !slices.IsSorted(seen) {
+		t.Errorf("meter: %d of %d written (piece %d bytes), along the way %v", wrote, total, size, seen)
 	}
 }

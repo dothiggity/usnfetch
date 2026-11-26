@@ -302,7 +302,10 @@ function renderStatusBar(s, look) {
   const held = jobs.filter((j) => j.state === "paused").length;   // paused one by one: not "waiting to start"
   const waiting = Math.max(0, (s.active || 0) - running.length - held);
   const p = cur && cur.size ? pct(cur.bytes, cur.size) : 0;
-  let main;
+  // a share's index being fetched (a job's, or a share being opened, when no job runs)
+  const opening = s.opening || [], open1 = !cur && !th.paused ? opening[0] : null;
+  const idx = cur ? cur.index : open1;
+  let main, href = "#/activity";
   if (th.paused) {
     main = [h("b", {}, throttleText(th)), h("span", { class: "faint" }, s.active ? `${s.active} waiting in the queue` : "nothing waiting")];
   } else if (cur) {
@@ -310,21 +313,30 @@ function renderStatusBar(s, look) {
     const verb = checking ? "Checking" : { planning: "Preparing", downloading: /^verifying/.test(cur.phase || "") ? "Verifying" : "Downloading", extracting: "Extracting", stopping: "Stopping" }[cur.state] || cur.state;
     const fp = cur.file_pos && cur.file_pos[1] > 1 ? `file ${cur.file_pos[0].toLocaleString()} of ${cur.file_pos[1].toLocaleString()}` : "";
     main = [h("span", { class: "sb-verb" }, verb), h("b", { class: "sb-name", title: jobLabel(cur) }, jobLabel(cur)),
-      cur.state === "planning" && !cur.current ? h("span", { class: "faint" }, "loading the share index…") : null,
+      cur.state === "planning" && !cur.current ? h("span", { class: "faint" }, cur.index ? "downloading its index" : "loading the share index…") : null,
       fp ? h("span", { class: "faint nowrap sb-fp" }, fp) : null,
       cur.current ? h("span", { class: "faint sb-file", title: cur.current }, cur.current) : null,
       running.length > 1 ? h("span", { class: "chip plain" }, `+${running.length - 1} more running`) : null];
+  } else if (open1) {
+    href = "#/share/" + open1.id;
+    main = [h("span", { class: "sb-verb" }, open1.rest ? "Fetching" : "Opening"), h("b", { class: "sb-name", title: open1.title }, open1.title || "a share"),
+      h("span", { class: "faint" }, open1.rest ? "the rest of its index" : "downloading its index"),
+      opening.length > 1 ? h("span", { class: "chip plain" }, `+${opening.length - 1} more`) : null];
   } else {
     main = [h("b", {}, waiting ? `${waiting} queued` : "Idle"), h("span", { class: "faint" }, waiting ? "waiting to start" : "nothing downloading"),
       held ? h("span", { class: "faint" }, `· ${held} paused in Activity`) : null];
   }
-  const prog = cur && cur.state === "downloading" ? h("div", { class: "sb-prog" },
-    h("div", { class: "bar" }, h("i", { style: { width: p + "%" } })),
-    h("div", { class: "sb-pline" }, h("b", {}, p.toFixed(1) + "%"), h("span", { class: "sb-of" }, ` · ${fmtBytes(cur.bytes)} of ${fmtBytes(cur.size)}`),
-      cur.eta ? [" · ETA ", h("b", {}, fmtEta(cur.eta))] : null)) : null;
+  const progBar = (done, size, eta) => {
+    const q = size ? pct(done, size) : 0;
+    return h("div", { class: "sb-prog" }, h("div", { class: "bar" }, h("i", { style: { width: q + "%" } })),
+      h("div", { class: "sb-pline" }, h("b", {}, q.toFixed(1) + "%"), h("span", { class: "sb-of" }, ` · ${fmtBytes(done)} of ${fmtBytes(size)}`),
+        eta ? [" · ETA ", h("b", {}, fmtEta(eta))] : null));
+  };
+  const prog = cur && cur.state === "downloading" ? progBar(cur.bytes, cur.size, cur.eta)
+    : idx ? progBar(idx.done, idx.total, idx.rate > 0 ? (idx.total - idx.done) / idx.rate : 0) : null;
   put(bar,
     h("img", { class: "sb-icon", src: `/static/icon-${look}.png`, alt: "" }),
-    h("a", { class: "sb-main", href: "#/activity", title: "Open Activity" }, main),
+    h("a", { class: "sb-main", href, title: open1 ? "Open this share" : "Open Activity" }, main),
     prog,
     h("div", { class: "sb-stats" },
       th.paused ? null : h("span", { class: "sb-speed", title: th.limit ? `Limited to ${fmtRate(th.limit)}` : "Download speed" },
@@ -335,7 +347,8 @@ function renderStatusBar(s, look) {
       : h("button", { class: "btn sm " + (th.paused ? "primary" : "ghost"), title: th.paused ? "Resume downloads" : "Pause downloads",
         onclick: (ev) => { ev.stopPropagation(); (th.paused ? resumeAll() : pausePrompt()).catch(fail); } }, icon(th.paused ? "play" : "pause"), h("span", { class: "sb-btxt" }, th.paused ? "Resume" : "Pause")));
   bar.className = "statusbar " + look;
-  document.title = cur && cur.state === "downloading" ? `${p.toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch` : th.paused ? "Paused — usnfetch" : "usnfetch";
+  document.title = cur && cur.state === "downloading" ? `${p.toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch`
+    : idx ? `Index ${pct(idx.done, idx.total).toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch` : th.paused ? "Paused — usnfetch" : "usnfetch";
 }
 
 const ROUTES = { catalog: pageCatalog, search: pageSearch, share: pageShare, activity: pageActivity, settings: pageSettings, system: pageSystem, login: pageLogin, setup: pageSetup };
@@ -391,9 +404,10 @@ function thinking() {
   const bar = h("span", { class: "an-cells" });
   const pctEl = h("span", { class: "an-pct" });
   const line = h("div", { class: "an-bar", "aria-hidden": "true" }, bar, pctEl);
+  const stat = h("div", { class: "an-stat" });   // while its index downloads: how much, how fast, how long
   const sub = h("div", { class: "an-sub faint small" });
   const el = h("div", { class: "thinking ansi", role: "status", "aria-live": "polite" },
-    h("div", { class: "an-line" }, h("span", { class: "an-star", "aria-hidden": "true" }, "✦"), spin, text), line, sub);
+    h("div", { class: "an-line" }, h("span", { class: "an-star", "aria-hidden": "true" }, "✦"), spin, text), line, stat, sub);
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let pct = null, frame = 0, seen = false, cols = 34, cw = 0;
   // fit: as many cells as the line has room for, next to the caps and a "100%"
@@ -440,6 +454,7 @@ function thinking() {
     const p = sharePhase(s);
     if (text.textContent !== p.text) text.textContent = p.text;
     pct = p.pct == null ? null : Math.max(0, Math.min(100, p.pct));
+    stat.textContent = s && s.progress && pct != null ? indexLine(s.progress) : "";
     sub.textContent = Date.now() - t0 > 8000 ? "Big shares take a few seconds per TB the first time. After that they open straight away." : "";
     draw();
   };
@@ -447,14 +462,21 @@ function thinking() {
   return el;
 }
 
+// indexLine: how far a share's index download is, in words ("1.2 GB of 2.9 GB · 24 MB/s · 1m 5s left")
+function indexLine(pr) {
+  return `${fmtBytes(pr.done)} of ${fmtBytes(pr.total)}` + (pr.rate > 0 ? ` · ${fmtRate(pr.rate)} · ${fmtEta((pr.total - pr.done) / pr.rate)} left` : "");
+}
+
 // sharePhase: what a share being opened is up to, in words (and how far, when that's known),
 // from the latest line of its log.
 function sharePhase(s) {
   const l = (((s && s.log) || []).slice(-1)[0] || "").replace(/^\[[^\]]*\]\s*/, "");
-  const m = l.match(/\((\d+)%\)/), pct = m ? +m[1] : null;
+  const m = l.match(/\((\d+)%\)/);
+  const pr = s && s.progress, pct = pr ? Math.min(100, Math.floor((100 * pr.done) / pr.total)) : m ? +m[1] : null;   // bytes of it, as they arrive
+  if (/finishing the index file/.test(l)) return { text: "Saving its index" };
   if (s && s.fetching) return { text: "Fetching the rest of its index", pct };
   if (/articles fetched|shard \d+\/\d+/.test(l)) return { text: "Downloading its index", pct: pct ?? 0 };
-  if (/^core index: \d+ (shards|part)/.test(l)) return { text: "Downloading its index", pct: 0 };
+  if (/^core index: \d+ (shards|part)/.test(l)) return { text: "Downloading its index", pct: pr ? pct : 0 };
   if (/converting/.test(l)) return { text: "Updating its saved index (only this once)" };
   if (/cached in|saved file list/.test(l)) return { text: "Opening its saved index" };
   // after a saved index, only what's in it is left to work out (games, BIOS files), and only
@@ -2082,6 +2104,10 @@ async function pageActivity() {
         waiting ? h("div", { class: "l3" }, h("span", {}, j.state === "paused" ? "Paused" : held ? "Waiting · paused with the rest" : idx === 0 ? "Next up" : "Waiting"),
             j.size ? h("span", {}, h("b", {}, fmtBytes(j.size)), j.bytes ? ` · ${fmtBytes(j.bytes)} already done` : "") : h("span", { class: "faint" }, "size known once it starts"),
             j.detail && j.detail !== "paused" ? h("span", { class: "faint" }, j.detail) : null)
+          : j.index ? [h("div", { class: "bar" }, h("i", { style: { width: pct(j.index.done, j.index.total) + "%" } })),   // its share's index first
+            h("div", { class: "l3" }, h("span", {}, "Downloading its index: ", h("b", {}, pct(j.index.done, j.index.total).toFixed(1) + "%"),
+              ` · ${fmtBytes(j.index.done)} of ${fmtBytes(j.index.total)}`), h("span", {}, h("b", {}, fmtRate(j.index.rate))),
+              h("span", {}, "ETA ", h("b", {}, fmtEta(j.index.rate > 0 ? (j.index.total - j.index.done) / j.index.rate : 0))))]
           : [h("div", { class: "bar" + (p >= 100 ? " done" : "") }, h("i", { style: { width: p + "%" } })),
             h("div", { class: "l3" }, h("span", {}, h("b", {}, p.toFixed(1) + "%"), ` · ${fmtBytes(j.bytes)} of ${fmtBytes(j.size)}`),
               h("span", {}, h("b", {}, fmtRate(j.rate))), h("span", {}, "ETA ", h("b", {}, fmtEta(j.eta))),
@@ -2823,7 +2849,7 @@ async function boot() {
   $("#statusbar").addEventListener("click", () => { location.hash = "#/activity"; });
   (function poll() {   // every 1.5 s while something runs, every 3 s otherwise
     const notifying = document.hidden && store.get("ui.notify", false) && !SESSION.tray_notify;   // keep listening for finished downloads
-    setTimeout(async () => { if (!document.hidden || notifying) await pollStatus(); poll(); }, document.hidden ? 15000 : lastStatus && lastStatus.running > 0 ? 1500 : 3000);
+    setTimeout(async () => { if (!document.hidden || notifying) await pollStatus(); poll(); }, document.hidden ? 15000 : lastStatus && (lastStatus.running > 0 || (lastStatus.opening || []).length) ? 1500 : 3000);
   })();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) pollStatus(); });   // back to the tab: up to date right away
   await pollStatus(); renderBasket();   // the first status before the first page (it says whether a provider is set up)

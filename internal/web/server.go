@@ -82,10 +82,37 @@ type session struct {
 	LastUsed time.Time
 	art      map[string]*artIndex // gallery artwork per game folder kind (gallery.go)
 	password string               // the share password it was opened with (to fetch the full index later)
+	meter    *share.Meter         // while its index is fetched: how far (progressJSON)
 	out      func(string)         // the app's log (the System page): every line goes there too
 }
 
 var progressRE = regexp.MustCompile(`\((\d+)%\)`)
+
+// measure: a meter for fetching the share's index, shown with the share while it runs (until
+// measured).
+func (s *session) measure() *share.Meter {
+	m := &share.Meter{}
+	s.mu.Lock()
+	s.meter = m
+	s.mu.Unlock()
+	return m
+}
+
+func (s *session) measured() {
+	s.mu.Lock()
+	s.meter = nil
+	s.mu.Unlock()
+}
+
+// progressJSON: how far fetching an index is (bytes of it of the total, and bytes a second),
+// nil when nothing is being fetched or its size isn't known yet.
+func progressJSON(m *share.Meter) map[string]any {
+	done, total, rate := m.Progress()
+	if total <= 0 {
+		return nil
+	}
+	return map[string]any{"done": done, "total": total, "rate": rate}
+}
 
 // log: what happens with the share, kept with it (for the API) and in the app's log,
 // with the share's name in front. The web app shows its own progress, not these lines.
@@ -410,7 +437,9 @@ func (s *Server) loadShare(ss *session, password string) {
 		return
 	}
 	// browsing: a saved file list will do; downloads, previews and checks fetch the rest (fullindex.go)
-	ix, err := share.LoadShare(ss.Link, share.LoadOpts{Accounts: accts.All(), Password: password, IndexDir: s.M.IndexDir(), Log: ss.log, ListOK: true})
+	ix, err := share.LoadShare(ss.Link, share.LoadOpts{Accounts: accts.All(), Password: password, IndexDir: s.M.IndexDir(), Log: ss.log, ListOK: true,
+		Meter: ss.measure()})
+	ss.measured()
 	if err != nil {
 		if errors.Is(err, share.ErrPassword) {
 			fail("password", err.Error())
@@ -569,7 +598,7 @@ func (s *Server) shareJSON(ss *session) map[string]any {
 	}
 	out := map[string]any{"id": ss.ID, "link": ss.Link, "title": ss.Title, "state": ss.State, "error": ss.Error, "error_code": ss.Code,
 		"log": append([]string{}, logs...), "checking": ss.Checking, "check": ss.Check, "info": nil, "catalog": nil, "index": nil,
-		"list_only": ss.Index != nil && !ss.Index.HasPool, "fetching": ss.Fetching, "fetch_error": ss.FetchErr}
+		"list_only": ss.Index != nil && !ss.Index.HasPool, "fetching": ss.Fetching, "fetch_error": ss.FetchErr, "progress": progressJSON(ss.meter)}
 	if ss.State == "ready" {
 		out["info"] = s.M.Store.ShareInfo(ss.Link)
 	}
@@ -1013,7 +1042,23 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 	}
 	s.smu.Lock()
 	open := len(s.sessions)
+	sessions := make([]*session, 0, open)
+	for _, ss := range s.sessions {
+		sessions = append(sessions, ss)
+	}
 	s.smu.Unlock()
+	// shares whose index is being fetched (opening one, or the rest of one): the status bar
+	// shows them like a download, and their speed counts
+	opening := []map[string]any{}
+	for _, ss := range sessions {
+		ss.mu.Lock()
+		p, title, rest := progressJSON(ss.meter), ss.Title, ss.Fetching
+		ss.mu.Unlock()
+		if p != nil {
+			speed += float64(p["rate"].(int64))
+			opening = append(opening, map[string]any{"id": ss.ID, "title": title, "rest": rest, "done": p["done"], "total": p["total"], "rate": p["rate"]})
+		}
+	}
 	// the transfer in progress, for the status bar: running jobs first, then the waiting ones
 	transfer := []map[string]any{}
 	for _, pass := range []bool{true, false} {
@@ -1023,7 +1068,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 				continue
 			}
 			transfer = append(transfer, map[string]any{"id": j.JobID, "name": j.Name, "picked": j.Picked, "state": j.State, "phase": j.Phase, "bytes": j.Bytes,
-				"size": j.Size, "rate": j.Rate, "eta": j.ETA, "file_pos": j.FilePos, "current": j.Current, "missing": j.Missing, "detail": j.Detail})
+				"size": j.Size, "rate": j.Rate, "eta": j.ETA, "file_pos": j.FilePos, "current": j.Current, "missing": j.Missing, "detail": j.Detail,
+				"index": j.Index})
 		}
 	}
 	// the jobs that finished last, so the browser can say when one is done or failed
@@ -1040,7 +1086,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 	}
 	return map[string]any{"version": s.Version, "accounts": accounts, "needs_setup": accounts == "", "disk": disk, "active": len(q), "throttle": s.M.Throttle(), "setup_done": s.M.Settings.SetupDone,
 		"transfer": transfer, "can_restart": s.Restart != nil, "recent": recent,
-		"running": running, "speed": speed, "open_shares": open, "runtime": runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
+		"running": running, "speed": speed, "open_shares": open, "opening": opening, "runtime": runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
 		"python": runtime.Version(), "data_dir": s.M.DataDir}, nil
 }
 

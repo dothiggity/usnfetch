@@ -72,12 +72,13 @@ func sortedParts(parts []any) []any {
 // build's connections with them, rather than dialling more than the account allows (those
 // waited out the provider's budget, 45 s, and on a slow line failed the build).
 type connPool struct {
-	dial func() (*nntp.Conn, error)
-	max  int
-	mu   sync.Mutex
-	cond *sync.Cond
-	idle []*nntp.Conn
-	live int // connections out or idle
+	dial  func() (*nntp.Conn, error)
+	max   int
+	mu    sync.Mutex
+	cond  *sync.Cond
+	idle  []*nntp.Conn
+	live  int    // connections out or idle
+	meter *Meter // hears of each article's bytes
 }
 
 func newConnPool(dial func() (*nntp.Conn, error), max int) *connPool {
@@ -151,6 +152,7 @@ func (p *connPool) fetch(msgids []string) ([]byte, error) {
 		data, err = FetchArticle(c, msgids)
 		if err == nil || errors.Is(err, nntp.ErrMissing) {
 			p.put(c)
+			p.meter.arrived(len(data))
 			return data, err
 		}
 		p.drop(c)
@@ -220,6 +222,7 @@ type BuildOpts struct {
 	Dial  func() (*nntp.Conn, error)
 	Conns int
 	Log   func(string)
+	Meter *Meter // how far it is, for a progress bar (optional)
 }
 
 func (o BuildOpts) log(f string, a ...any) {
@@ -234,6 +237,7 @@ func BuildIndex(m Manifest, key []byte, path string, o BuildOpts) (string, error
 		o.Conns = 8
 	}
 	pool := newConnPool(o.Dial, o.Conns)
+	pool.meter = o.Meter
 	defer pool.close()
 	b, err := NewBuilder(path)
 	if err != nil {
@@ -329,6 +333,7 @@ func BuildIndex(m Manifest, key []byte, path string, o BuildOpts) (string, error
 	if err != nil {
 		return "", err
 	}
+	o.log("core index: all fetched, finishing the index file")
 	out, err := b.Finish(map[string]any{"folder_id": m.Str("folder_id"), "share_id": m.Str("share_id")})
 	if err != nil {
 		return "", err
@@ -352,6 +357,11 @@ func shardParts(sh map[string]any) []any {
 // (a shard of many reports how far the whole index is).
 func streamEnvelope(pool *connPool, parts []any, key []byte, digest string, o BuildOpts, emit func(*Doc) error, progress func(done, n int)) error {
 	n := len(parts)
+	whole := int64(0) // the whole index is this envelope: how big it is, for the meter
+	if progress == nil {
+		whole = partsBytes(parts)
+		o.Meter.setTotal(whole)
+	}
 	window := max(16, 6*o.Conns)
 	type res struct {
 		data []byte
@@ -437,7 +447,10 @@ func streamEnvelope(pool *connPool, parts []any, key []byte, digest string, o Bu
 			}
 			if progress != nil {
 				progress(i+1, n)
-			} else if n > 1 && time.Since(t0) > 4*time.Second {
+				continue
+			}
+			o.Meter.setDone(whole * int64(i+1) / int64(n))
+			if n > 1 && time.Since(t0) > 4*time.Second {
 				t0 = time.Now()
 				o.log("core index: %d/%d articles fetched (%d%%)", i+1, n, 100*(i+1)/n)
 			}
@@ -482,9 +495,16 @@ func shardBytes(sh map[string]any) int64 {
 	if n := int64(num(sh["size"])); n > 0 {
 		return n
 	}
+	return partsBytes(shardParts(sh))
+}
+
+// partsBytes: the encrypted size of an envelope's articles, from their descriptors (or a
+// guess of one index article for a part that doesn't say).
+func partsBytes(parts []any) int64 {
 	var n int64
-	for _, p := range shardParts(sh) {
-		if s := int64(num(p.(map[string]any)["size"])); s > 0 {
+	for _, p := range parts {
+		m, _ := p.(map[string]any)
+		if s := int64(num(m["size"])); s > 0 {
 			n += s
 		} else {
 			n += 750_000
@@ -577,9 +597,11 @@ func buildShards(pool *connPool, shards []any, key []byte, b *Builder, o BuildOp
 	for _, s := range size {
 		total += s
 	}
+	o.Meter.setTotal(total)
 	var base int64
 	t0 := time.Now()
 	report := func(i int, part int64, pool int64, final bool) {
+		o.Meter.setDone(min(total, done+part))
 		if !final && time.Since(t0) < progressEvery {
 			return
 		}
@@ -646,8 +668,9 @@ type LoadOpts struct {
 	Password string
 	IndexDir string
 	Log      func(string)
-	Conns    int  // connections for fetching the index (default min(16, account connections))
-	ListOK   bool // browsing: a saved file list will do (downloads, streaming and checks need the full index)
+	Conns    int    // connections for fetching the index (default min(16, account connections))
+	ListOK   bool   // browsing: a saved file list will do (downloads, streaming and checks need the full index)
+	Meter    *Meter // how far fetching the index is, when it has to be fetched (optional)
 }
 
 // IndexPath: the cache file for one manifest (a re-published share gets a new one).
@@ -755,7 +778,7 @@ func loadVia(link *Link, a *nntp.Account, o LoadOpts, logf func(string, ...any))
 			conns = min(16, max(1, a.Connections))
 		}
 		t0 := time.Now()
-		if _, err := BuildIndex(m, key, path, BuildOpts{Dial: dial, Conns: conns, Log: o.Log}); err != nil {
+		if _, err := BuildIndex(m, key, path, BuildOpts{Dial: dial, Conns: conns, Log: o.Log, Meter: o.Meter}); err != nil {
 			return nil, err
 		}
 		logf("core index: indexed in %.1fs -> %s", time.Since(t0).Seconds(), filepath.Base(path))

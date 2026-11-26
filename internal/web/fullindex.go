@@ -58,7 +58,8 @@ func (s *Server) fetchFull(ss *session) {
 			done(err.Error())
 			return
 		}
-		ix, err := share.LoadShare(ss.Link, share.LoadOpts{Accounts: accts.All(), Password: password, IndexDir: s.M.IndexDir(), Log: ss.log})
+		ix, err := share.LoadShare(ss.Link, share.LoadOpts{Accounts: accts.All(), Password: password, IndexDir: s.M.IndexDir(), Log: ss.log, Meter: ss.measure()})
+		ss.measured()
 		if err == nil {
 			err = ix.EnsureTree(ss.log)
 			if err != nil {
