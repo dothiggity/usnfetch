@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -424,8 +425,9 @@ type Index struct {
 	ro          *sql.DB        // immutable read-only connections for the hot path
 	mu          sync.Mutex
 	files       []FileEntry
-	dc          *dirCache // folder paths for search (search.go), loaded on first use
-	sdb         *sql.DB   // read-only pool for search scans, opened with dc
+	dc          *dirCache   // folder paths for search (search.go), loaded on first use
+	sdb         *sql.DB     // read-only pool for search scans, opened with dc
+	tree        atomic.Bool // the folder tree is built (seen once: it never goes away)
 }
 
 var errIndex = errors.New("index file is incomplete or from another version")
@@ -574,7 +576,27 @@ func (ix *Index) File(fid int64) (*FileEntry, error) {
 	return &f, err
 }
 
+// FileByPath: the file at a path in the share ("/" or the share's own "\"), nil if none.
+// With the folder tree built it's found through it (the folder by its path, then the file by
+// its name, both indexed); the files table has no index on path, and reading all of it took
+// most of a second per file on a build of millions.
 func (ix *Index) FileByPath(path string) (*FileEntry, error) {
+	if ix.hasTree() {
+		norm := normDir(path)
+		dir, name := "", norm
+		if i := strings.LastIndex(norm, "/"); i >= 0 {
+			dir, name = norm[:i], norm[i+1:]
+		}
+		var fid int64
+		err := ix.rw.QueryRow("SELECT df.fid FROM dirs d JOIN dir_files df ON df.did = d.did WHERE d.path = ? AND df.name = ?", dir, name).Scan(&fid)
+		if err == sql.ErrNoRows {
+			return nil, nil // the tree has every file there's data for (what browsing shows)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return ix.File(fid)
+	}
 	f, err := scanFile(ix.rw.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", path))
 	if err == sql.ErrNoRows && strings.Contains(path, "/") { // named the folder tree's way: the share's may use \
 		f, err = scanFile(ix.rw.QueryRow("SELECT "+fileCols+" FROM files WHERE path = ?", strings.ReplaceAll(path, "/", `\`)))
@@ -583,6 +605,19 @@ func (ix *Index) FileByPath(path string) (*FileEntry, error) {
 		return nil, nil
 	}
 	return &f, err
+}
+
+// hasTree: the folder tree is built (EnsureTree), so lookups can go through it.
+func (ix *Index) hasTree() bool {
+	if ix.tree.Load() {
+		return true
+	}
+	var one int
+	if ix.rw.QueryRow("SELECT 1 FROM meta WHERE k = 'tree'").Scan(&one) == nil {
+		ix.tree.Store(true)
+		return true
+	}
+	return false
 }
 
 // ---- plans and segment lookups -----------------------------------------------
