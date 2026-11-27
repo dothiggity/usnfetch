@@ -770,6 +770,7 @@ a.sb-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
 /* chips become text: status colour stays, the pill and its outline go */
 .chip:not(.fchip) { height: auto; padding: 0; border: 0; background: none; border-radius: 0; font-weight: 600; letter-spacing: 0; font-size: 12.5px; }
 .chip.plain, .chip.tag { color: var(--muted); font-weight: 500; }
+.chip.plain.ok { color: var(--ok); }
 .chip.tag.launcher { color: var(--muted); }
 .chip.tag:hover, .chip.tag:focus-visible { color: var(--text); text-decoration: underline; }
 /* health that's fine is grey: only a problem gets colour */
@@ -787,7 +788,7 @@ a.sb-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
 table.t td { border-bottom-color: color-mix(in srgb, var(--border-soft) 70%, transparent); }
 .title-cell a.t1:hover { color: var(--accent); text-decoration: none; }
 /* secondary buttons: an outline, no fill, so the one main button stands out */
-.btn:not(.primary):not(.ghost):not(.solid) { background: transparent; }
+.btn:where(:not(.primary, .ghost, .solid)) { background: transparent; }   /* low weight: hover, .seg .on and the box-art info button still win */
 .seg .btn.on { background: var(--panel-2); }
 /* box art: what you have is a small tick, not a label on every cover */
 .gcard .art .chip { position: absolute; left: 6px; top: 6px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--panel) 88%, transparent); }
@@ -805,8 +806,9 @@ table.t td { border-bottom-color: color-mix(in srgb, var(--border-soft) 70%, tra
 .crumbrow { margin: 2px 0 10px; }
 .crumbrow .crumbs { margin: 0; font-size: 15px; }
 .crumbrow .crumbs a { padding: 3px 5px; }
-.browsebar.b2 { flex-wrap: nowrap; gap: 10px; }
-.search-bar.sb2 { flex: 1 1 auto; max-width: 620px; gap: 0; }
+.browsebar.b2 { flex-wrap: wrap; gap: 8px 10px; }
+.search-bar.sb2 { flex: 1 1 300px; max-width: 620px; gap: 0; }
+.b2r { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: nowrap; }
 .sb2 select.mode { height: 34px; border-radius: var(--radius-sm) 0 0 var(--radius-sm); border-right: 0; font-weight: 600; padding-right: 6px; }
 .sb2 .search { flex: 1; }
 .browsebar.b2 .sb2 .search .input { width: 100%; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }

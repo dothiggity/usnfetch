@@ -191,9 +191,13 @@ func (s *Server) planInstall(ctx context.Context, ix *share.Index, sel *selectio
 	}
 	whole := len(sel.folders) == 1 && sel.folders[0] == ""
 	if whole {
-		err = ix.EachFile(func(f share.FileEntry) error {
-			if f.Downloadable() && !add(f.Path, f.Size) {
-				return errEnough
+		// a page at a time: add looks up the games' pictures and folders in the same index,
+		// which it can't while a listing holds the index's read connection
+		err = ix.EachFilePage(2000, func(page []share.FileEntry) error {
+			for _, f := range page {
+				if f.Downloadable() && !add(f.Path, f.Size) {
+					return errEnough
+				}
 			}
 			return nil
 		})

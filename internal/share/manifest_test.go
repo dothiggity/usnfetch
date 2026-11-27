@@ -49,6 +49,44 @@ func TestSignedManifests(t *testing.T) {
 		if _, err := CheckSignature(m, &unpinned); err == nil {
 			t.Errorf("%s: a signed manifest was accepted through a link without a pin", c.Name)
 		}
+		// edited to look unsigned: refused through a link that names the owner. A v4 manifest is
+		// told by its format name, a v5 one by its version, so changing the other one changes
+		// nothing (it's still checked, and still verifies: neither is in what's signed). A v3
+		// manifest is the one unsigned kind that goes through, as in the official client.
+		v4 := m.Str("format") == formatV4
+		for _, e := range []struct {
+			what   string
+			edit   func(Manifest)
+			pinned string // "verified", "unsigned" or "" (refused)
+		}{
+			{"format", func(m Manifest) { m["format"] = "something_else" }, map[bool]string{true: "", false: "verified"}[v4]},
+			{"version", func(m Manifest) { m["version"] = json.Number("3") }, map[bool]string{true: "verified", false: ""}[v4]},
+			{"v3", func(m Manifest) { m["format"], m["version"] = formatV3, json.Number("3") }, "unsigned"},
+		} {
+			b, _ := json.Marshal(m)
+			cp, _ := ParseManifest(b)
+			e.edit(cp)
+			st, err := CheckSignature(cp, link)
+			if e.pinned == "" && err == nil {
+				t.Errorf("%s: %s changed: accepted as %q through a link that names the owner", c.Name, e.what, st)
+			} else if e.pinned != "" && (err != nil || st != e.pinned) {
+				t.Errorf("%s: %s changed: %q %v, want %q", c.Name, e.what, st, err, e.pinned)
+			}
+			if e.pinned != "verified" { // without a pin, what reads as unsigned still opens (older links)
+				if st, err := CheckSignature(cp, &unpinned); err != nil || st != "unsigned" {
+					t.Errorf("%s: %s changed, no pin: %q %v", c.Name, e.what, st, err)
+				}
+			}
+		}
+		// a v4 manifest never reads as sharded: its signature doesn't cover shards
+		if m.Str("format") == formatV4 {
+			b, _ := json.Marshal(m)
+			cp, _ := ParseManifest(b)
+			cp["core_index_format"] = "sharded"
+			if cp.IsSharded() {
+				t.Errorf("%s: a v4 manifest marked sharded reads as sharded", c.Name)
+			}
+		}
 		tamper := map[string]func(Manifest){
 			"created_at": func(m Manifest) { m["created_at"] = m.Str("created_at") + "x" },
 			"access key": func(m Manifest) { m.Map("access")["folder_key_hex"] = strings.Repeat("00", 32) },

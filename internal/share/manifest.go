@@ -80,8 +80,12 @@ func num(v any) int64 {
 	return 0
 }
 
-// formatV4: the v4 manifest's format name.
-const formatV4 = "share_v4_manifest"
+// formatV4 / formatV3: the v4 manifest's format name, and the one older (unsigned) format the
+// official client still reads.
+const (
+	formatV4 = "share_v4_manifest"
+	formatV3 = "share_v3_manifest"
+)
 
 // IsV5: a v5 manifest (its core index comes in shards, and its signature covers them). Told
 // by its version, not by the format's name.
@@ -89,9 +93,11 @@ func (m Manifest) IsV5() bool {
 	return m.Int("version") >= 5 && m.Str("format") != formatV4
 }
 
-// IsSharded: a v5 (or v4-with-shards) manifest.
+// IsSharded: a v5 manifest, or an unsigned one that says its index is sharded. Never a v4
+// manifest: its signature covers its index parts, not shards, so shards added to it would go
+// unchecked (the official client reads v4 by its parts only).
 func (m Manifest) IsSharded() bool {
-	return m.Str("core_index_format") == "sharded" || m.IsV5()
+	return m.IsV5() || (m.Str("core_index_format") == "sharded" && m.Str("format") != formatV4)
 }
 
 // AccessMode is public / password / private ("" if absent).
@@ -360,6 +366,11 @@ func VerifyManifestSignature(m Manifest, linkFP string) (string, error) {
 // wrong with a signed format is an error (no silent downgrade).
 func CheckSignature(m Manifest, link *Link) (string, error) {
 	if !m.IsV5() && m.Str("format") != formatV4 {
+		// a link that names the owner comes with a signed manifest, or a v3 one; anything else
+		// is a signed manifest edited to look unsigned (its format or version changed)
+		if link.OwnerFP != "" && m.Str("format") != formatV3 {
+			return "", fmt.Errorf("this share's manifest (format %q, version %s) isn't one that can be checked against the owner its link names: not opening it", m.Str("format"), m.Str("version"))
+		}
 		return "unsigned", nil
 	}
 	if link.OwnerFP == "" {

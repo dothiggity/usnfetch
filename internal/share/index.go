@@ -596,6 +596,40 @@ func (ix *Index) EachFile(fn func(FileEntry) error) error {
 	return rows.Err()
 }
 
+// EachFilePage: every file, a page of n at a time, with nothing held open while fn runs, so
+// fn may look things up in this Index (EachFile's fn can't: it runs while the read connection,
+// the only one, is busy with the listing, and a lookup through it would wait forever).
+func (ix *Index) EachFilePage(n int, fn func([]FileEntry) error) error {
+	last := int64(-1 << 62)
+	for {
+		rows, err := ix.db.Query("SELECT "+fileCols+" FROM files WHERE fid > ? ORDER BY fid LIMIT ?", last, n)
+		if err != nil {
+			return err
+		}
+		var page []FileEntry
+		for rows.Next() {
+			f, err := scanFile(rows)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			page = append(page, f)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil || len(page) == 0 {
+			return err
+		}
+		last = page[len(page)-1].FID
+		if err := fn(page); err != nil {
+			return err
+		}
+		if len(page) < n {
+			return nil
+		}
+	}
+}
+
 // Files: every file, loaded on first use (the command line's list and fetch; a download
 // job goes through EachFile instead).
 func (ix *Index) Files() ([]FileEntry, error) {

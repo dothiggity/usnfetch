@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// A write waits for a read of the same Index to finish (it doesn't fail or hang), and once
-// the Index is closed nothing opens the file for writing again (which would keep it from
-// being deleted or replaced).
+// A write waits for a read of the same Index to finish (SQLite alone would give up after its
+// busy timeout), then goes through; once the Index is closed nothing opens the file for writing
+// again (that handle would keep it from being deleted or replaced).
 func TestIndexWriter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "f00-0123456789abcdef.usnindex")
 	buildTestIndex(t, path)
@@ -22,11 +22,22 @@ func TestIndexWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows.Next()
+	got := make(chan struct{})
 	wrote := make(chan error, 1)
-	go func() { wrote <- ix.EnsureTree(nil) }()
+	go func() {
+		w, done, err := ix.writer()
+		close(got)
+		if err != nil {
+			wrote <- err
+			return
+		}
+		defer done()
+		_, err = w.Exec("UPDATE files SET layout = 1")
+		wrote <- err
+	}()
 	select {
-	case err := <-wrote:
-		t.Fatalf("the write didn't wait for the read: %v", err)
+	case <-got:
+		t.Fatal("the writer didn't wait for the read")
 	case <-time.After(200 * time.Millisecond):
 	}
 	rows.Close()
@@ -38,8 +49,11 @@ func TestIndexWriter(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the write still waits after the read ended")
 	}
+	if err := ix.EnsureTree(nil); err != nil { // reads, then writes, on its own
+		t.Fatal(err)
+	}
 	if _, err := ix.Summary(); err != nil {
-		t.Fatalf("reading after the write: %v", err)
+		t.Fatalf("reading after the writes: %v", err)
 	}
 	ix.Close()
 	if _, _, err := ix.writer(); err == nil {

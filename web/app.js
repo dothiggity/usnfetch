@@ -128,7 +128,9 @@ function modal({ title, body, actions = [], wide = false, onclose }) {
       h("div", { class: "mb" }, body),
       buttons.length ? h("div", { class: "mf" }, buttons) : null));
   $("#modal-root").append(back); document.addEventListener("keydown", esc);
-  const f = back.querySelector(".mb input:not([type=radio]):not([type=checkbox]),.mb textarea,.mb select"); if (f) setTimeout(() => f.focus(), 30);
+  // the first field in view (one folded away under Options can't take focus), else the main button: Enter works either way
+  const f = [...back.querySelectorAll(".mb input:not([type=radio]):not([type=checkbox]),.mb textarea,.mb select")].find((x) => x.getClientRects().length) || back.querySelector(".mf .btn.primary");
+  if (f) setTimeout(() => f.focus(), 30);
   return close;
 }
 
@@ -140,6 +142,7 @@ function menu(anchor, items) {
   const m = h("div", { class: "popmenu", style: { top: `${r.bottom + 4}px`, right: `${Math.max(8, window.innerWidth - r.right)}px` } },
     items.filter(Boolean).map(([label, run, kind]) => h("button", { class: "mi " + (kind || ""), type: "button", onclick: () => { m.remove(); run(); } }, label)));
   document.body.append(m);
+  if (m.getBoundingClientRect().left < 8) { m.style.right = "auto"; m.style.left = "8px"; }   // not past the left edge (phones)
   const away = (ev) => { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener("mousedown", away, true); } };
   setTimeout(() => document.addEventListener("mousedown", away, true), 0);
 }
@@ -816,7 +819,7 @@ async function pageCatalog() {
     // grouped by the first launcher (A to Z) or device (in the device list's order); none named last
     const firstL = (e) => launchers(e)[0] || "\uffff", firstD = (e) => (devices(e).length ? deviceRank[devices(e)[0]] ?? 1e6 : 1e7);
     const by = { "size-desc": (a, b) => size(b) - size(a), "size-asc": (a, b) => size(a) - size(b), added: (a, b) => (b.added || 0) - (a.added || 0),
-      status: (a, b) => rank(b) - rank(a), title,
+      status: (a, b) => rank(b) - rank(a) || healthRank(b) - healthRank(a) || title(a, b), title,
       launcher: (a, b) => firstL(a).localeCompare(firstL(b)) || title(a, b), device: (a, b) => firstD(a) - firstD(b) || title(a, b),
       health: (a, b) => healthRank(b) - healthRank(a) || title(a, b),
       // last opened first; cached but never opened to browse (a download's index) next; never opened last
@@ -884,7 +887,7 @@ async function pageCatalog() {
   function stateCell(e) {
     const j = e.job, g = e.got, v = e.health && e.health.verdict;
     const bad = ["gone", "missing", "partial", "error"].includes(v);
-    if ((j && (ACTIVE.has(j.state) || j.state === "failed")) || (g && (g.complete || g.files))) return h("span", { class: "nowrap" }, statusCell(e), bad ? [" ", healthChip(e.health)] : null);
+    if (j || (g && (g.complete || g.files))) return h("span", { class: "nowrap" }, statusCell(e), bad ? [" ", healthChip(e.health)] : null);
     return e.health && e.health.verdict ? healthChip(e.health) : null;
   }
 
@@ -931,7 +934,7 @@ async function pageCatalog() {
     }));
     head.checked = vis.length > 0 && vis.every((e) => sel.has(e.id));
     for (const [th, key] of sortHeads) {
-      const on = key === "size" ? f.sort.startsWith("size") : f.sort === key;
+      const on = key === "size" ? f.sort.startsWith("size") : key === "status" ? f.sort === "status" || f.sort === "health" : f.sort === key;
       th.classList.toggle("sorted", on);
       th.querySelector(".arrow").textContent = on ? (f.sort === "size-asc" ? " ↑" : " ↓") : "";
     }
@@ -961,7 +964,7 @@ async function pageCatalog() {
         h("button", { class: "btn primary", onclick: () => downloadEntries(selected, () => { sel.clear(); load(); }).catch(fail) }, icon("download"), "Download selected…"));
     }
     if (!total) {
-      tbody.replaceChildren(h("tr", {}, h("td", { colspan: 7 }, h("div", { class: "empty left" }, h("h3", {}, "No shares yet"),
+      tbody.replaceChildren(h("tr", {}, h("td", { colspan: 6 }, h("div", { class: "empty left" }, h("h3", {}, "No shares yet"),
         h("div", { class: "muted" }, "usnfetch doesn't come with any shares. Add the share links you have:"), addSharesHelp(true)))));
     }
   }
@@ -1331,6 +1334,7 @@ async function reviewDownload(s, sel, done, more = {}) {
   function showQueue() {   // everything already there and skipped: nothing to queue
     const nothing = allThere && existing === "skip";
     showOpt();
+    if (nothing && optsBox) optsBox.open = true;   // the way to check or replace them
     nothingNote.classList.toggle("hidden", !nothing);
     showSpace();
     if (queueBtn && !lib) { queueBtn.disabled = nothing; queueBtn.textContent = nothing ? "Nothing to download" : over && !plan.min_free_gb ? "Queue anyway" : "Queue download"; }
@@ -1347,7 +1351,7 @@ async function reviewDownload(s, sel, done, more = {}) {
     if (!r.counted) { haveLine.textContent = " · not counted for a selection this large"; haveChoices.classList.remove("hidden"); showQueue(); return; }
     const any = r.files > 0 || r.partial > 0;
     allThere = r.of > 0 && r.files >= r.of && !r.partial; haveBytes = r.bytes || 0;
-    nothingNote.textContent = `Nothing to download: all ${r.of.toLocaleString()} file${r.of === 1 ? " is" : "s are"} already in ${r.dir}. To check or replace them, pick an option above.`;
+    nothingNote.textContent = `Nothing to download: all ${r.of.toLocaleString()} file${r.of === 1 ? " is" : "s are"} already in ${r.dir}. To check or replace them, choose under Options.`;
     haveChoices.classList.toggle("hidden", !any);
     haveLine.textContent = !any ? " · none of these files are there yet"
       : ` · ${r.files.toLocaleString()} of ${r.of.toLocaleString()} file${r.of === 1 ? "" : "s"} (${fmtBytes(r.bytes)}) already there` +
@@ -1381,12 +1385,13 @@ async function reviewDownload(s, sel, done, more = {}) {
   // where the files go and how many are there already, in view; the folder's name, archives and
   // files already there (rarely changed) under Options, which says what they're set to
   const optSum = h("span", { class: "faint" });
+  let optsBox = null;
   const showOpt = () => { optSum.textContent = [found.length ? { off: "archives kept as they are", sets: "RAR and multi-part sets extracted", all: "every archive extracted" }[mode] : null,
     haveChoices.classList.contains("hidden") ? null : { skip: "files already there skipped", verify: "files already there checked", redownload: "files already there downloaded again" }[existing]].filter(Boolean).join(" · ") || "folder name"; };
   const folderPart = h("div", { class: "stack tight" },
     h("div", {}, h("div", { class: "k2" }, "Files go to", haveLine), dest),
     nothingNote,
-    h("details", { class: "more opts", onchange: showOpt }, h("summary", {}, "Options · ", optSum),
+    optsBox = h("details", { class: "more opts", onchange: showOpt }, h("summary", {}, "Options · ", optSum),
       h("div", { class: "stack tight" },
         h("div", { class: "form tight" }, h("label", { class: "k" }, "Folder"), name),
         found.length ? h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · this selection has " + found.join(", "))), choices,
@@ -1608,7 +1613,7 @@ async function renderShare(s, path) {
   // the rest at the end
   $("#view").replaceChildren(summary, h("div", { class: "crumbrow" }, crumbs),
     h("div", { class: "browsebar b2" }, h("div", { class: "search-bar sb2" }, kindSel, h("div", { class: "search" }, icon("search"), q)),
-      hideChip, h("span", { class: "grow" }), galAllLbl, viewSw, viewBtn), listing, grid, foot, dock);
+      h("div", { class: "b2r" }, hideChip, galAllLbl, viewSw, viewBtn)), listing, grid, foot, dock);
 
   // ---- the share in one line; the rest under Details
   let detailsOpen = store.get("sharedetails", false);
@@ -1654,7 +1659,7 @@ async function renderShare(s, path) {
       (insideAll ? sys : sys.slice(0, 12)).map((x) => h("a", { class: "chip plain sys", title: `Open ${x.folder}`, href: `#/share/${sid}/${x.folder.split("/").map(encodeURIComponent).join("/")}` },
         x.name, h("span", { class: "faint" }, " " + x.games.toLocaleString()))),
       !insideAll && sys.length > 12 ? h("a", { class: "chip plain sys", href: "#", onclick: (ev) => { ev.preventDefault(); insideAll = true; renderSummary(); } }, `+${sys.length - 12} more`) : null) : null;
-    const atTop = !path || path === loneTop.get(sid);
+    const atTop = !path || !path.includes("/") || path === loneTop.get(sid);
     if (!atTop) return put(summary, listNote);   // in a folder: the folder is the subject
     put(summary, listNote, h("div", { class: "sum-line" },
       h("b", {}, fmtBytes(info.size)), cat && cat.listed ? h("span", { class: "faint" }, `(listed as ${cat.listed})`) : null,
@@ -2403,9 +2408,9 @@ function addSharesHelp(compact) {
     h("div", {}, h("div", { class: "ht" }, title), h("div", { class: "muted" }, text), btn || null));
   const goCatalog = (what) => () => { pendingCatalogAction = what; if (location.hash === "#/catalog") route(); else location.hash = "#/catalog"; };
   return h("div", { class: "howtos" + (compact ? " compact" : "") },
-    item("upload", "Import a link list", "Catalog → Import list. Choose a file or paste text: any text with usn:// links works, such as a plain list, a CSV, or a web page you saved. Exported lists also give each share its title, listed size and source.",
+    item("upload", "Import a link list", "Catalog → Add → Import a link list. Choose a file or paste text: any text with usn:// links works, such as a plain list, a CSV, or a web page you saved. Exported lists also give each share its title, listed size and source.",
       h("button", { class: "btn primary sm", onclick: goCatalog("import") }, icon("upload"), "Import a list")),
-    item("link", "Open one link", "Catalog → Open link. Paste a usn:// link to browse that share, check that it is complete, and pick the files you want.",
+    item("link", "Open one link", "Catalog → Add → Open one link. Paste a usn:// link to browse that share, check that it is complete, and pick the files you want.",
       h("button", { class: "btn sm", onclick: goCatalog("link") }, icon("link"), "Open a link")),
     item("download", "Download links straight away", "Activity → Add links downloads one or more shares in full, without browsing them first.",
       h("button", { class: "btn sm", onclick: () => { pendingActivityAction = "add"; if (location.hash === "#/activity") route(); else location.hash = "#/activity"; } }, icon("plus"), "Add links")));

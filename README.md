@@ -48,8 +48,8 @@ you download is up to you.
 2. On Windows, unzip it and double-click `usnfetch.exe`. It sits by the clock and opens
    http://localhost:7979/. Anywhere else, run `usnfetch serve`.
 3. Setup asks for your Usenet provider (it can copy yours from SABnzbd) and a download folder.
-4. Add links. **Catalog → Import list** takes a list of `usn://` links, **Catalog → Open link**
-   opens one share, and **Activity → Add links** downloads whole shares.
+4. Add links. **Catalog → Add** imports a list of `usn://` links or opens one share, and
+   **Activity → Add links** downloads whole shares.
 
 The builds aren't code-signed yet, so Windows may say it protected your PC. Check the zip against
 the checksums file on the release page, then choose More info → Run anyway.
