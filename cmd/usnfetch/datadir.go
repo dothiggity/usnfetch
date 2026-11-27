@@ -16,19 +16,30 @@ import (
 //     %LOCALAPPDATA%\usnfetch on Windows, ~/Library/Application Support/usnfetch on macOS,
 //     $XDG_DATA_HOME/usnfetch (~/.local/share/usnfetch) elsewhere.
 func defaultData() string {
+	d, _ := defaultDataFrom()
+	return d
+}
+
+// defaultDataFrom: the same, and what chose it, for Settings to say: "env" (USNFETCH_DATA),
+// "portable" (a portable file beside the program), "beside" (settings from an older version
+// there) or "default" (the per-user folder). --data, when given, is "flag" (parseServe).
+func defaultDataFrom() (string, string) {
 	if d := os.Getenv("USNFETCH_DATA"); d != "" {
-		return d
+		return d, "env"
 	}
 	exe := exeDir()
 	for _, marker := range []string{"portable", "portable.txt", "usnfetch_gui.json"} {
 		if _, err := os.Stat(filepath.Join(exe, marker)); err == nil {
-			return exe
+			if marker == "usnfetch_gui.json" {
+				return exe, "beside"
+			}
+			return exe, "portable"
 		}
 	}
 	if d := userDataDir(); d != "" {
-		return filepath.Join(d, "usnfetch")
+		return filepath.Join(d, "usnfetch"), "default"
 	}
-	return exe
+	return exe, "beside"
 }
 
 // userDataDir is the per-user folder for application data, or "" when there isn't one.

@@ -51,6 +51,8 @@ type Server struct {
 	Static  fs.FS
 	DevDir  string // serve the UI from this folder instead (design iteration)
 	Restart func() // set when usnfetch can restart itself (tray mode); nil otherwise
+	// DataFrom: what chose the data folder (flag, env, portable, beside, default), for Settings
+	DataFrom string
 
 	cache     *engine.SegmentCache
 	smu       sync.Mutex
@@ -1648,6 +1650,7 @@ func (s *Server) settingsView() map[string]any {
 	m["accounts"] = accts
 	m["web"] = map[string]any{"host": st.Web.Host, "port": st.Web.Port, "has_password": st.Web.PasswordHash != ""}
 	m["sab_ini"] = app.SabIniDefault()
+	m["data_dir"], m["data_from"] = s.M.DataDir, s.DataFrom // shown in Settings (read only: set when usnfetch starts)
 	sz, ur := extract.FindTools(st.SevenZipPath, st.UnrarPath)
 	m["tools"] = map[string]any{"sevenzip": sz, "unrar": ur} // what extraction would use ("" = not found)
 	def := app.DefaultSettings()                             // advanced mode shows a setting changed from these

@@ -31,6 +31,7 @@ type serveOpts struct {
 	host      string
 	port      int
 	data, dev string
+	dataFrom  string   // what chose the data folder: flag, env, portable, beside or default
 	args      []string // as given (for the autostart entry)
 }
 
@@ -38,11 +39,17 @@ func parseServe(name string, args []string) serveOpts {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	host := fs.String("host", "", "address to listen on (default from settings, 127.0.0.1; 0.0.0.0 = every interface)")
 	port := fs.Int("port", 0, "port (default from settings, 7979)")
-	data := fs.String("data", defaultData(), "data folder: settings, job state, catalog, share indexes")
+	def, from := defaultDataFrom()
+	data := fs.String("data", def, "data folder: settings, job state, catalog, share indexes")
 	dev := fs.String("web", "", "serve the UI from this folder instead of the built-in copy (for design work)")
 	_ = fs.Parse(args)
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "data" {
+			from = "flag"
+		}
+	})
 	dir, _ := filepath.Abs(*data)
-	return serveOpts{host: *host, port: *port, data: dir, dev: *dev, args: args}
+	return serveOpts{host: *host, port: *port, data: dir, dev: *dev, dataFrom: from, args: args}
 }
 
 // running is a started web app.
@@ -68,6 +75,7 @@ func startServe(o serveOpts) (*running, error) {
 		return nil, err
 	}
 	srv := web.New(Version, m, cat, webui.FS, o.dev)
+	srv.DataFrom = o.dataFrom
 	h, p := o.host, o.port
 	if h == "" {
 		h = m.Settings.Web.Host

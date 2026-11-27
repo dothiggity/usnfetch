@@ -24,7 +24,7 @@ func (s *Server) setupRoutes() {
 		st := s.M.Settings
 		return map[string]any{"setup_done": st.SetupDone, "accounts": s.settingsView()["accounts"],
 			"complete_dir": st.CompleteDir, "index_dir": st.IndexDir, "index_dir_default": filepath.Join(s.M.DataDir, "index_cache"),
-			"sab_ini": app.SabIniDefault(), "data_dir": s.M.DataDir}, nil
+			"sab_ini": app.SabIniDefault(), "data_dir": s.M.DataDir, "data_from": s.DataFrom}, nil
 	})
 	s.api("POST /api/setup/folder", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		return folderCheck(str(body(r)["path"])), nil

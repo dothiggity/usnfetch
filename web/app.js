@@ -2195,6 +2195,17 @@ const sw = (checked) => { const i = h("input", { type: "checkbox", checked }); r
 let fieldN = 0;
 // field: a label, its input and help for a .form grid. The label is tied to the input (the
 // first one inside, for a switch or a row of controls), and the help is read out with it.
+// the data folder: where it is and what chose it, read only (it's set when usnfetch starts)
+function dataFolderHelp(from) {
+  return "Settings, the catalog, the job list and share indexes. " + ({
+    flag: "Set when usnfetch starts, with --data (in its shortcut or on the command line). To move it, close usnfetch, move the folder, then change --data.",
+    env: "Set by the USNFETCH_DATA environment variable. To move it, close usnfetch, move the folder, then change that variable.",
+    portable: "Beside usnfetch.exe, because there's a file called portable next to it.",
+    beside: "Beside usnfetch.exe, where an older version kept its settings.",
+  }[from] || "The usual place for your user. To keep it somewhere else, start usnfetch with --data <folder>, or put an empty file called portable next to usnfetch.exe.");
+}
+const dataFolderPath = (dir) => h("div", { class: "mono", style: { wordBreak: "break-all", padding: "6px 0" } }, dir);
+
 const field = (label, input, help) => {
   const ctl = input instanceof Element ? (input.matches("input,select,textarea") ? input : input.querySelector("input,select,textarea")) : null;
   let helpEl = null;
@@ -2516,6 +2527,8 @@ async function pageSetup(parts) {
     put(card, h("div", { class: "body" }, h("h2", {}, "Folders"),
       h("div", { class: "form" }, h("label", { class: "k" }, "Download folder"), h("div", {}, h("div", { class: "inline nowrap-row" }, dl, browseBtn(dl)), dlState),
         h("div", { class: "help" }, "Each download gets a folder of its own in here, named after the share. Shares can be very large, so pick a drive with room.")),
+      info.data_dir ? h("div", { class: "form" }, h("label", { class: "k" }, "Data folder"), dataFolderPath(info.data_dir),
+        h("div", { class: "help" }, dataFolderHelp(info.data_from))) : null,
       h("details", { class: "more" + (info.index_dir ? "" : " adv") }, h("summary", {}, "Advanced: where share indexes are kept"),
         h("div", { class: "form" }, h("label", { class: "k" }, "Share index folder"), h("div", {}, h("div", { class: "inline nowrap-row" }, ix, browseBtn(ix)), ixState),
           h("div", { class: "help" }, "Each share's index, about 100 MB per TB of share, kept so it opens in seconds next time. Leave it empty to keep them in the data folder."))),
@@ -2632,6 +2645,7 @@ async function pageSettings() {
       ...adv("max_parallel_jobs", "Parallel jobs", d.max_parallel_jobs, "How many downloads run at once."),
       ...adv("missing_retries", "Missing-article retries", d.missing_retries, "Retry passes (1, 2, 3… minutes apart) for articles missing on every account."),
       ...adv("stream_connections", "Streaming connections", d.stream_connections, "At most this many of the provider's connections play files straight from Usenet in the browser; downloads hand them over while you watch."),
+      ...(s.data_dir ? field("Data folder", dataFolderPath(s.data_dir), dataFolderHelp(s.data_from)) : []),
       ...adv("index_dir", "Share index folder", h("div", { class: "inline nowrap-row" }, d.index_dir, browseBtn(d.index_dir)), "Where each share's index is kept once opened. Shares don't change, so nothing here expires by age."),
       ...adv("index_cache_gb", "Full indexes, up to (GB)", d.index_cache_gb, "Downloads, previews and checks use a share's full index (about 100 MB per TB of share). Past this much, the ones used least recently are cut down to their file list, which is zipped and kept, so browsing stays instant; the rest is fetched again when needed. 0 keeps only file lists for shares not in use."),
       ...adv("sevenzip_path", "7-Zip", d.sevenzip_path, tools.sevenzip_path),
