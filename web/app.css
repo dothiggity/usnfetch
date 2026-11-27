@@ -830,7 +830,8 @@ table.t td { border-bottom-color: color-mix(in srgb, var(--border-soft) 70%, tra
 .gm-b select.from.bare:hover, .gm-b select.from.bare:focus { border-color: var(--border); }
 .gm-b a.bname { color: var(--muted); }
 .gm-b a.bname:hover { color: var(--accent); }
-.gm-b .btn.icon.xs { color: var(--faint); }
+.gm-b a.openb { display: inline-flex; align-items: center; gap: 4px; margin: 0 4px; }
+.gm-b a.openb svg.i { width: 13px; height: 13px; }
 details.opts > summary { color: var(--text); font-size: 13px; }
 details.opts > summary .faint { font-size: 12.5px; }
 div:has(> .choices.hidden) > .k2.hv { display: none; }

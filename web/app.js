@@ -1096,12 +1096,12 @@ async function pageSearch() {
   // folder; with more than one, a plain menu picks which, and a folder icon opens it
   function fromLine(builds, cur, pick, folder) {
     const openIt = (ev) => { ev.preventDefault(); go(cur(), folder(cur())); };
-    if (builds.length === 1) return h("div", { class: "gm-b faint small" }, "from ", h("a", { class: "bname", href: "#", title: "Open the build at this folder", onclick: openIt }, builds[0].title));
+    // a link that says so, in every case: a grey build name alone doesn't look like something to click
+    const openIc = () => h("a", { class: "openb", href: "#", title: "Open the build at this folder", onclick: openIt }, icon("folder"), "open it there");
+    if (builds.length === 1) return h("div", { class: "gm-b faint small" }, "from ", h("a", { class: "bname", href: "#", title: "Open the build at this folder", onclick: openIt }, builds[0].title), openIc());
     const sel = h("select", { class: "input from bare", "aria-label": "Which build to download it from", onchange: () => pick(builds[+sel.value]) },
       builds.map((x, i) => h("option", { value: i, selected: x === cur() }, short(x.title, 44))));
-    return h("div", { class: "gm-b faint small" }, "from ", sel,
-      h("a", { class: "btn ghost icon xs", href: "#", title: "Open the build at this folder", "aria-label": "Open the build at this folder", onclick: openIt }, icon("folder")),
-      h("span", {}, `${builds.length} builds have it`));
+    return h("div", { class: "gm-b faint small" }, "from ", sel, openIc(), h("span", {}, `${builds.length} builds have it`));
   }
 
   const gameRow = (g) => {
