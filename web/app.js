@@ -303,8 +303,9 @@ function renderStatusBar(s, look) {
   const waiting = Math.max(0, (s.active || 0) - running.length - held);
   const p = cur && cur.size ? pct(cur.bytes, cur.size) : 0;
   // a share's index being fetched (a job's, or a share being opened, when no job runs)
+  // (paused: the bar says so, whatever still runs)
   const opening = s.opening || [], open1 = !cur && !th.paused ? opening[0] : null;
-  const idx = cur ? cur.index : open1;
+  const idx = th.paused ? null : cur ? cur.index : open1;
   let main, href = "#/activity";
   if (th.paused) {
     main = [h("b", {}, throttleText(th)), h("span", { class: "faint" }, s.active ? `${s.active} waiting in the queue` : "nothing waiting")];
@@ -313,14 +314,14 @@ function renderStatusBar(s, look) {
     const verb = checking ? "Checking" : { planning: "Preparing", downloading: /^verifying/.test(cur.phase || "") ? "Verifying" : "Downloading", extracting: "Extracting", stopping: "Stopping" }[cur.state] || cur.state;
     const fp = cur.file_pos && cur.file_pos[1] > 1 ? `file ${cur.file_pos[0].toLocaleString()} of ${cur.file_pos[1].toLocaleString()}` : "";
     main = [h("span", { class: "sb-verb" }, verb), h("b", { class: "sb-name", title: jobLabel(cur) }, jobLabel(cur)),
-      cur.state === "planning" && !cur.current ? h("span", { class: "faint" }, cur.index ? "downloading its index" : "loading the share index…") : null,
+      cur.state === "planning" && !cur.current ? h("span", { class: "faint" }, cur.index ? (cur.index.saving ? "saving its index" : "downloading its index") : "loading the share index…") : null,
       fp ? h("span", { class: "faint nowrap sb-fp" }, fp) : null,
       cur.current ? h("span", { class: "faint sb-file", title: cur.current }, cur.current) : null,
       running.length > 1 ? h("span", { class: "chip plain" }, `+${running.length - 1} more running`) : null];
   } else if (open1) {
     href = "#/share/" + open1.id;
     main = [h("span", { class: "sb-verb" }, open1.rest ? "Fetching" : "Opening"), h("b", { class: "sb-name", title: open1.title }, open1.title || "a share"),
-      h("span", { class: "faint" }, open1.rest ? "the rest of its index" : "downloading its index"),
+      h("span", { class: "faint" }, open1.saving ? "saving its index" : open1.rest ? "the rest of its index" : "downloading its index"),
       opening.length > 1 ? h("span", { class: "chip plain" }, `+${opening.length - 1} more`) : null];
   } else {
     main = [h("b", {}, waiting ? `${waiting} queued` : "Idle"), h("span", { class: "faint" }, waiting ? "waiting to start" : "nothing downloading"),
@@ -333,7 +334,7 @@ function renderStatusBar(s, look) {
         eta ? [" · ETA ", h("b", {}, fmtEta(eta))] : null));
   };
   const prog = cur && cur.state === "downloading" ? progBar(cur.bytes, cur.size, cur.eta)
-    : idx ? progBar(idx.done, idx.total, idx.rate > 0 ? (idx.total - idx.done) / idx.rate : 0) : null;
+    : idx && !idx.saving ? progBar(idx.done, idx.total, idx.rate > 0 ? (idx.total - idx.done) / idx.rate : 0) : null;
   put(bar,
     h("img", { class: "sb-icon", src: `/static/icon-${look}.png`, alt: "" }),
     h("a", { class: "sb-main", href, title: open1 ? "Open this share" : "Open Activity" }, main),
@@ -348,7 +349,7 @@ function renderStatusBar(s, look) {
         onclick: (ev) => { ev.stopPropagation(); (th.paused ? resumeAll() : pausePrompt()).catch(fail); } }, icon(th.paused ? "play" : "pause"), h("span", { class: "sb-btxt" }, th.paused ? "Resume" : "Pause")));
   bar.className = "statusbar " + look;
   document.title = cur && cur.state === "downloading" ? `${p.toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch`
-    : idx ? `Index ${pct(idx.done, idx.total).toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch` : th.paused ? "Paused — usnfetch" : "usnfetch";
+    : idx ? (idx.saving ? "Saving index — usnfetch" : `Index ${pct(idx.done, idx.total).toFixed(0)}% · ${fmtRate(s.speed)} — usnfetch`) : th.paused ? "Paused — usnfetch" : "usnfetch";
 }
 
 const ROUTES = { catalog: pageCatalog, search: pageSearch, share: pageShare, activity: pageActivity, settings: pageSettings, system: pageSystem, login: pageLogin, setup: pageSetup };
@@ -478,10 +479,10 @@ function sharePhase(s) {
   if (/articles fetched|shard \d+\/\d+/.test(l)) return { text: "Downloading its index", pct: pct ?? 0 };
   if (/^core index: \d+ (shards|part)/.test(l)) return { text: "Downloading its index", pct: pr ? pct : 0 };
   if (/converting/.test(l)) return { text: "Updating its saved index (only this once)" };
-  if (/cached in|saved file list/.test(l)) return { text: "Opening its saved index" };
+  if (/cached in|(opened|unzipped) the saved file list/.test(l)) return { text: "Opening its saved index" };   // not "could not unzip the saved file list"
   // after a saved index, only what's in it is left to work out (games, BIOS files), and only
   // the first time; after a fresh one, its folders are sorted out first
-  const saved = () => s.log.some((x) => /cached in|saved file list/.test(x));   // only with a line in l: s.log has it
+  const saved = () => s.log.some((x) => /cached in|(opened|unzipped) the saved file list/.test(x));   // only with a line in l: s.log has it
   if (/indexed in|pool entries/.test(l)) return { text: saved() ? "Working out what's in it" : "Sorting out its folders" };
   if (/folder tree:/.test(l)) return { text: "Working out what's in it" };
   if (/^share:|^signature:/.test(l)) return { text: "Checking who shared it" };
@@ -2105,9 +2106,10 @@ async function pageActivity() {
             j.size ? h("span", {}, h("b", {}, fmtBytes(j.size)), j.bytes ? ` · ${fmtBytes(j.bytes)} already done` : "") : h("span", { class: "faint" }, "size known once it starts"),
             j.detail && j.detail !== "paused" ? h("span", { class: "faint" }, j.detail) : null)
           : j.index ? [h("div", { class: "bar" }, h("i", { style: { width: pct(j.index.done, j.index.total) + "%" } })),   // its share's index first
-            h("div", { class: "l3" }, h("span", {}, "Downloading its index: ", h("b", {}, pct(j.index.done, j.index.total).toFixed(1) + "%"),
-              ` · ${fmtBytes(j.index.done)} of ${fmtBytes(j.index.total)}`), h("span", {}, h("b", {}, fmtRate(j.index.rate))),
-              h("span", {}, "ETA ", h("b", {}, fmtEta(j.index.rate > 0 ? (j.index.total - j.index.done) / j.index.rate : 0))))]
+            h("div", { class: "l3" }, j.index.saving ? h("span", {}, "Saving its index", h("span", { class: "faint" }, ` · ${fmtBytes(j.index.total)}`))   // all of it arrived
+              : [h("span", {}, "Downloading its index: ", h("b", {}, pct(j.index.done, j.index.total).toFixed(1) + "%"),
+                ` · ${fmtBytes(j.index.done)} of ${fmtBytes(j.index.total)}`), h("span", {}, h("b", {}, fmtRate(j.index.rate))),
+                h("span", {}, "ETA ", h("b", {}, fmtEta(j.index.rate > 0 ? (j.index.total - j.index.done) / j.index.rate : 0)))])]
           : [h("div", { class: "bar" + (p >= 100 ? " done" : "") }, h("i", { style: { width: p + "%" } })),
             h("div", { class: "l3" }, h("span", {}, h("b", {}, p.toFixed(1) + "%"), ` · ${fmtBytes(j.bytes)} of ${fmtBytes(j.size)}`),
               h("span", {}, h("b", {}, fmtRate(j.rate))), h("span", {}, "ETA ", h("b", {}, fmtEta(j.eta))),
@@ -2846,7 +2848,7 @@ async function boot() {
     try { const st = await api("/status"); if (st.setup_done === false && !location.hash.startsWith("#/setup")) start = "#/setup"; } catch { /* offline */ }
   }
   window.addEventListener("hashchange", route);
-  $("#statusbar").addEventListener("click", () => { location.hash = "#/activity"; });
+  $("#statusbar").addEventListener("click", (ev) => { if (!ev.target.closest("a, button")) location.hash = "#/activity"; });   // its link goes where it says
   (function poll() {   // every 1.5 s while something runs, every 3 s otherwise
     const notifying = document.hidden && store.get("ui.notify", false) && !SESSION.tray_notify;   // keep listening for finished downloads
     setTimeout(async () => { if (!document.hidden || notifying) await pollStatus(); poll(); }, document.hidden ? 15000 : lastStatus && (lastStatus.running > 0 || (lastStatus.opening || []).length) ? 1500 : 3000);

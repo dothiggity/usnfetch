@@ -275,9 +275,10 @@ type JobView struct {
 
 // IndexProgress: how far fetching a share's index is: bytes of it of the total, and how fast.
 type IndexProgress struct {
-	Done  int64 `json:"done"`
-	Total int64 `json:"total"`
-	Rate  int64 `json:"rate"`
+	Done   int64 `json:"done"`
+	Total  int64 `json:"total"`
+	Rate   int64 `json:"rate"`
+	Saving bool  `json:"saving,omitempty"` // all of it arrived: the index file is being finished
 }
 
 func (j *Job) View(full bool) JobView {
@@ -314,7 +315,7 @@ func (j *Job) View(full bool) JobView {
 	}
 	if j.meter != nil {
 		if done, total, bps := j.meter.Progress(); total > 0 {
-			v.Index, v.Rate = &IndexProgress{done, total, bps}, float64(bps)
+			v.Index, v.Rate = &IndexProgress{done, total, bps, j.meter.Saving()}, float64(bps)
 		}
 	}
 	if full {

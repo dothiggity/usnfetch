@@ -111,7 +111,7 @@ func progressJSON(m *share.Meter) map[string]any {
 	if total <= 0 {
 		return nil
 	}
-	return map[string]any{"done": done, "total": total, "rate": rate}
+	return map[string]any{"done": done, "total": total, "rate": rate, "saving": m.Saving()}
 }
 
 // log: what happens with the share, kept with it (for the API) and in the app's log,
@@ -1047,6 +1047,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 		sessions = append(sessions, ss)
 	}
 	s.smu.Unlock()
+	sort.Slice(sessions, func(a, b int) bool { return sessions[a].ID < sessions[b].ID }) // the same order each time: the bar shows the first
 	// shares whose index is being fetched (opening one, or the rest of one): the status bar
 	// shows them like a download, and their speed counts
 	opening := []map[string]any{}
@@ -1056,7 +1057,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) (any, error) {
 		ss.mu.Unlock()
 		if p != nil {
 			speed += float64(p["rate"].(int64))
-			opening = append(opening, map[string]any{"id": ss.ID, "title": title, "rest": rest, "done": p["done"], "total": p["total"], "rate": p["rate"]})
+			opening = append(opening, map[string]any{"id": ss.ID, "title": title, "rest": rest, "done": p["done"], "total": p["total"], "rate": p["rate"], "saving": p["saving"]})
 		}
 	}
 	// the transfer in progress, for the status bar: running jobs first, then the waiting ones

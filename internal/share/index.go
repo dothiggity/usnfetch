@@ -1,6 +1,7 @@
 package share
 
 import (
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -425,6 +426,7 @@ type Index struct {
 	ro          *sql.DB        // immutable read-only connections for the hot path
 	w           *sql.DB        // writes, opened on the first one (writer)
 	wmu         sync.Mutex
+	closed      bool // Close ran: no writer opens after it (under wmu)
 	mu          sync.Mutex
 	files       []FileEntry
 	dc          *dirCache   // folder paths for search (search.go), loaded on first use
@@ -495,19 +497,32 @@ func readMeta(db *sql.DB) (map[string]any, error) {
 }
 
 // writer: the connection for the few writes (a file's layout when it's first fetched, the
-// folder tree when it's first built), opened when the first one comes.
-func (ix *Index) writer() (*sql.DB, error) {
+// folder tree when it's first built), opened when the first one comes. Until done is called
+// it holds the read connection: a write waits for a read of this Index to finish (SQLite
+// would give up after busy_timeout, say while a long EachFile holds the file) and no read
+// starts meanwhile, as when both went through one connection. Don't read through ix.db
+// before done. After Close it fails, so no stray handle keeps the file open.
+func (ix *Index) writer() (w *sql.DB, done func(), err error) {
+	c, err := ix.db.Conn(context.Background())
+	if err != nil {
+		return nil, nil, err
+	}
 	ix.wmu.Lock()
 	defer ix.wmu.Unlock()
+	if ix.closed {
+		c.Close()
+		return nil, nil, errors.New("the share's index is closed")
+	}
 	if ix.w == nil {
 		w, err := sql.Open("sqlite", sqliteURI(ix.Path, "mode=rw&_pragma=busy_timeout(30000)"))
 		if err != nil {
-			return nil, err
+			c.Close()
+			return nil, nil, err
 		}
 		w.SetMaxOpenConns(1)
 		ix.w = w
 	}
-	return ix.w, nil
+	return ix.w, func() { c.Close() }, nil
 }
 
 // Usable: the file exists and is a complete index of this schema.
@@ -527,6 +542,7 @@ func (ix *Index) Close() {
 	ix.ro.Close()
 	ix.db.Close()
 	ix.wmu.Lock()
+	ix.closed = true
 	if ix.w != nil {
 		ix.w.Close()
 	}
@@ -719,10 +735,11 @@ func (ix *Index) settleLayout(fe *FileEntry) (int, error) {
 	} else if err := ix.buildOffsets(fe); err != nil {
 		return 0, err
 	}
-	w, err := ix.writer()
+	w, done, err := ix.writer()
 	if err != nil {
 		return 0, err
 	}
+	defer done()
 	_, err = w.Exec("UPDATE files SET layout = ?, size = ? WHERE fid = ?", layout, fe.Size, fe.FID)
 	return layout, err
 }
@@ -754,10 +771,11 @@ func (ix *Index) buildOffsets(fe *FileEntry) error {
 		all = append(all, r)
 	}
 	rows.Close()
-	w, err := ix.writer()
+	w, done, err := ix.writer()
 	if err != nil {
 		return err
 	}
+	defer done()
 	tx, err := w.Begin()
 	if err != nil {
 		return err
@@ -1019,10 +1037,11 @@ func (ix *Index) EnsureTree(log func(string)) error {
 		files = append(files, df{did, parts[len(parts)-1], fid})
 	}
 	rows.Close()
-	w, err := ix.writer()
+	w, done, err := ix.writer()
 	if err != nil {
 		return err
 	}
+	defer done()
 	tx, err := w.Begin()
 	if err != nil {
 		return err

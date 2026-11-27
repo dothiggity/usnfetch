@@ -237,6 +237,7 @@ func BuildIndex(m Manifest, key []byte, path string, o BuildOpts) (string, error
 		o.Conns = 8
 	}
 	pool := newConnPool(o.Dial, o.Conns)
+	o.Meter.start()
 	pool.meter = o.Meter
 	defer pool.close()
 	b, err := NewBuilder(path)
@@ -334,6 +335,7 @@ func BuildIndex(m Manifest, key []byte, path string, o BuildOpts) (string, error
 		return "", err
 	}
 	o.log("core index: all fetched, finishing the index file")
+	o.Meter.setSaving()
 	out, err := b.Finish(map[string]any{"folder_id": m.Str("folder_id"), "share_id": m.Str("share_id")})
 	if err != nil {
 		return "", err

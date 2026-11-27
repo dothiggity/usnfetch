@@ -195,6 +195,9 @@ func TestBuildBigShards(t *testing.T) {
 			p, _ := strconv.Atoi(mm[1])
 			pcts = append(pcts, p)
 			written = append(written, meter.done.Load())
+			if meter.Saving() {
+				t.Errorf("saving the index while it's still coming: %s", l)
+			}
 		}
 	}
 	_, err := BuildIndex(m, key, path, BuildOpts{Dial: func() (*nntp.Conn, error) { return nntp.Dial(acc, 10*time.Second) }, Conns: 8, Log: logf, Meter: meter})
@@ -219,6 +222,9 @@ func TestBuildBigShards(t *testing.T) {
 	}
 	if got := meter.got.Load(); got < size*9/10 {
 		t.Errorf("meter: %d bytes arrived of %d", got, size)
+	}
+	if !meter.Saving() {
+		t.Error("meter: not saving once all of it arrived")
 	}
 	grew := int64(peak.Load()) - int64(base.HeapInuse)
 	t.Logf("peak heap during the build: +%d MB", grew>>20)
