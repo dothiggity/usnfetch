@@ -141,7 +141,7 @@ func shardedShare(t *testing.T, key []byte, entries []int) (Manifest, map[string
 		d := sha256.Sum256(blob)
 		shards = append(shards, map[string]any{"shard_index": si, "parts": parts, "digest": hex.EncodeToString(d[:]), "size": len(blob)})
 	}
-	raw, _ := json.Marshal(map[string]any{"format": "core_index", "version": 5, "folder_id": "f0", "share_id": "s0", "shards": shards})
+	raw, _ := json.Marshal(map[string]any{"version": 5, "folder_id": "f0", "share_id": "s0", "shards": shards})
 	m, err := ParseManifest(raw)
 	if err != nil {
 		t.Fatal(err)

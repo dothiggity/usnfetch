@@ -80,9 +80,18 @@ func num(v any) int64 {
 	return 0
 }
 
+// formatV4: the v4 manifest's format name.
+const formatV4 = "share_v4_manifest"
+
+// IsV5: a v5 manifest (its core index comes in shards, and its signature covers them). Told
+// by its version, not by the format's name.
+func (m Manifest) IsV5() bool {
+	return m.Int("version") >= 5 && m.Str("format") != formatV4
+}
+
 // IsSharded: a v5 (or v4-with-shards) manifest.
 func (m Manifest) IsSharded() bool {
-	return m.Str("core_index_format") == "sharded" || (m.Str("format") == "core_index" && m.Int("version") >= 5)
+	return m.Str("core_index_format") == "sharded" || m.IsV5()
 }
 
 // AccessMode is public / password / private ("" if absent).
@@ -288,8 +297,8 @@ func VerifyManifestSignature(m Manifest, linkFP string) (string, error) {
 	head = append(head, adig...)
 	tv := num(sig["tbs_version"])
 	var tbs []byte
-	switch m.Str("format") {
-	case "core_index": // v5
+	switch {
+	case m.IsV5():
 		if tv != 1 {
 			return "", sigErr("unsupported v5 tbs_version %d", tv)
 		}
@@ -315,7 +324,7 @@ func VerifyManifestSignature(m Manifest, linkFP string) (string, error) {
 		tbs = append(tbs, be32(m.Int("num_shards"))...)
 		tbs = append(tbs, withLen([]byte(m.Str("shard_key")))...)
 		tbs = append(tbs, withLen([]byte(m.Str("folder_digest")))...)
-	case "share_v4_manifest":
+	case m.Str("format") == formatV4:
 		var tail []byte
 		switch tv {
 		case 1:
@@ -350,9 +359,7 @@ func VerifyManifestSignature(m Manifest, linkFP string) (string, error) {
 // CheckSignature: "verified", or "unsigned" for formats that predate signing. Anything
 // wrong with a signed format is an error (no silent downgrade).
 func CheckSignature(m Manifest, link *Link) (string, error) {
-	switch m.Str("format") {
-	case "share_v4_manifest", "core_index":
-	default:
+	if !m.IsV5() && m.Str("format") != formatV4 {
 		return "unsigned", nil
 	}
 	if link.OwnerFP == "" {

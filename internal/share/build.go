@@ -716,9 +716,7 @@ func LoadShare(linkStr string, o LoadOpts) (*Index, error) {
 // no password needed"); the format's own name only when it is not one usnfetch knows.
 func describeManifest(m Manifest) string {
 	d := "file list v" + m.Str("version")
-	switch f := m.Str("format"); f {
-	case "", "core_index", "share_v4_manifest":
-	default:
+	if f := m.Str("format"); f != "" && f != formatV4 && !m.IsV5() {
 		d += " (format " + f + ")"
 	}
 	switch acc := m.AccessMode(); acc {
