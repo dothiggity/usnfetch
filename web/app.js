@@ -41,7 +41,7 @@ const ICONS = {
   grid: "M4 4h7v7H4Z M13 4h7v7h-7Z M4 13h7v7H4Z M13 13h7v7h-7Z", list: "M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01",
   pause: "M8 5v14M16 5v14", up: "M12 19V5m0 0-6 6m6-6 6 6", drag: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01", gauge: "M4 18a8 8 0 1 1 16 0M12 18l4-6",
   save: "M12 4v10m0 0-4-4m4 4 4-4M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4", more: "M5 12h.01M12 12h.01M19 12h.01", info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z M12 11v5M12 8h.01",
-  copy: "M9 9h10v11H9Z M5 15V4h10",
+  copy: "M9 9h10v11H9Z M5 15V4h10", chevd: "M6 9l6 6 6-6",
 };
 function icon(name, cls = "i") {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -230,7 +230,7 @@ function healthChip(hl) {
     : hl.verdict === "gone" ? `Gone: the share's manifest isn't at any of your providers any more (${when}), so the share can't be opened.`
     : hl.verdict === "available" ? `Verified: all ${hl.sampled || ""} sampled articles are at your provider · ${when}`
     : hl.sampled ? `${hl.available} of ${hl.sampled} sampled articles found · ${when}` : "";
-  return h("span", { class: "chip " + k, title }, h("span", { class: "dot" }), label);
+  return h("span", { class: `chip ${k} hl-${hl.verdict}`, title }, h("span", { class: "dot" }), label);
 }
 
 // ---------------------------------------------------------------- shell
@@ -315,8 +315,8 @@ function renderStatusBar(s, look) {
     const fp = cur.file_pos && cur.file_pos[1] > 1 ? `file ${cur.file_pos[0].toLocaleString()} of ${cur.file_pos[1].toLocaleString()}` : "";
     main = [h("span", { class: "sb-verb" }, verb), h("b", { class: "sb-name", title: jobLabel(cur) }, jobLabel(cur)),
       cur.state === "planning" && !cur.current ? h("span", { class: "faint" }, cur.index ? (cur.index.saving ? "saving its index" : "downloading its index") : "loading the share index…") : null,
-      fp ? h("span", { class: "faint nowrap sb-fp" }, fp) : null,
-      cur.current ? h("span", { class: "faint sb-file", title: cur.current }, cur.current) : null,
+      fp ? h("span", { class: "faint nowrap sb-fp adv" }, fp) : null,   // these two change every second
+      cur.current ? h("span", { class: "faint sb-file adv", title: cur.current }, cur.current) : null,
       running.length > 1 ? h("span", { class: "chip plain" }, `+${running.length - 1} more running`) : null];
   } else if (open1) {
     href = "#/share/" + open1.id;
@@ -654,6 +654,10 @@ async function reviewShares(src, done) {
   const choice = (name, cur, opts, set) => h("div", { class: "choices" }, opts.map(([v, label, help]) => h("label", { class: "choice" },
     h("input", { type: "radio", name, value: v, checked: v === cur, onchange: () => set(v) }),
     h("div", {}, h("div", { class: "cl" }, label, name === "xmode" && v === plan.extract_default ? h("span", { class: "chip plain" }, "default") : null), h("div", { class: "ch" }, help)))));
+  const optSum = h("span", { class: "faint" });
+  const showOpt = () => { optSum.textContent = [{ off: "archives kept as they are", sets: "RAR and multi-part sets extracted", all: "every archive extracted" }[mode],
+    anyThere ? { skip: "files already there skipped", verify: "files already there checked", redownload: "files already there downloaded again" }[existing] : null].filter(Boolean).join(" · "); };
+  showOpt();
   modal({ title: items.length === 1 ? "Download " + items[0].title : `Download ${items.length} shares`, wide: true, body: [
     goneN ? h("div", { class: "note bad" }, goneN === items.length
       ? (items.length === 1 ? "This share is gone from your provider (its manifest isn't there any more), so it can't be downloaded."
@@ -666,14 +670,17 @@ async function reviewShares(src, done) {
       h("div", {}, h("div", { class: "k" }, "Free space"), h("div", { class: "v" + (over ? " warn" : "") }, plan.free != null ? fmtBytes(plan.free) : "—"))),
     over ? spaceNote(size, plan, ok.some((it) => it.size_listed)) : null,
     h("div", {}, h("div", { class: "k2" }, "Files go to"), list),
-    h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · counted when each download starts")),
-      choice("xmode", mode, [["off", "Don't extract", "Keep every file exactly as it was shared."],
-        ["sets", "RAR and multi-part sets only", "Single .zip and .7z files stay zipped, so ROM, BIOS and asset packs keep working."],
-        ["all", "Everything", "Also unpack every single .zip and .7z."]], (v) => { mode = v; })),
-    anyThere ? h("div", {}, h("div", { class: "k2" }, "Files already there", h("span", { class: "muted" }, " · some of these folders exist in your download folder")),
-      choice("xexist", existing, [["skip", "Skip them", "A file with the same name and size counts as done."],
-        ["verify", "Check them first", "Compare each one's SHA-256 with the share and download only what differs."],
-        ["redownload", "Download everything again", "Overwrite what is there."]], (v) => { existing = v; })) : null,
+    // archives and files already there are rarely changed: under Options, which says what they're set to
+    h("details", { class: "more opts" }, h("summary", {}, "Options · ", optSum),
+      h("div", { class: "stack tight" },
+        h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · counted when each download starts")),
+          choice("xmode", mode, [["off", "Don't extract", "Keep every file exactly as it was shared."],
+            ["sets", "RAR and multi-part sets only", "Single .zip and .7z files stay zipped, so ROM, BIOS and asset packs keep working."],
+            ["all", "Everything", "Also unpack every single .zip and .7z."]], (v) => { mode = v; showOpt(); })),
+        anyThere ? h("div", {}, h("div", { class: "k2" }, "Files already there", h("span", { class: "muted" }, " · some of these folders exist in your download folder")),
+          choice("xexist", existing, [["skip", "Skip them", "A file with the same name and size counts as done."],
+            ["verify", "Check them first", "Compare each one's SHA-256 with the share and download only what differs."],
+            ["redownload", "Download everything again", "Overwrite what is there."]], (v) => { existing = v; showOpt(); })) : null)),
   ], actions: !ok.length ? [{ label: "Close" }] : [{ label: "Cancel" }, { label: over && !plan.min_free_gb ? "Queue anyway" : ok.length === 1 ? "Queue download" : `Queue ${ok.length} downloads`, kind: "primary", run: async () => {
     const body = { extract: mode, existing };
     const r = src.ids ? await api("/catalog/download", { body: { ...body, ids: ok.map((it) => it.id) } }) : await api("/jobs", { body: { ...body, text: ok.map((it) => it.link).join("\n") } });
@@ -736,8 +743,9 @@ async function pageCatalog() {
   icon("filter"), "Filters", badge);
   const searchBox = h("div", { class: "search" }, icon("search"), q);
   const filters = [searchBox, filtersBtn];
-  const importBtn = h("button", { class: "btn primary", onclick: () => importDialog(load) }, icon("upload"), "Import list");
-  toolbar(...filters, h("button", { class: "btn", onclick: openLinkDialog }, icon("link"), "Open link"), importBtn);
+  // two things done now and then, under one button; it's the main one only while the catalog is empty
+  const addBtn = h("button", { class: "btn", "aria-haspopup": "menu", onclick: () => menu(addBtn, [["Import a link list…", () => importDialog(load)], ["Open one link…", openLinkDialog]]) }, icon("plus"), "Add", icon("chevd"));
+  toolbar(...filters, addBtn);
   const onChips = h("div", { class: "filter-chips" });
   // the filters that are on, each with a way to turn it off
   function showOn() {
@@ -765,7 +773,7 @@ async function pageCatalog() {
     return th;
   }
   const thead = h("thead", {}, h("tr", {}, h("th", { class: "cb" }, head), cth("Title", "title"), cth("Size", "size", "right"),
-    cth("Opened", "opened", "adv"), cth("Health", "health"), cth("Status", "status"), h("th", { class: "act" }, "")));
+    cth("Opened", "opened", "adv"), cth("State", "status"), h("th", { class: "act" }, "")));
   const table = h("div", { class: "tablewrap" }, h("table", { class: "t cardrows" }, thead, tbody));
   view.append(onChips, count, table, dock);
   api("/status").then((st) => {
@@ -871,10 +879,18 @@ async function pageCatalog() {
     return h("span", { class: "faint", title: "Not opened yet" }, "—");
   }
 
-  function sizeCell(e) {
-    if (e.share) return [fmtBytes(e.share.size), h("div", { class: "faint small", title: e.listed ? "Listed as " + e.listed : "" }, `${e.share.files.toLocaleString()} file${e.share.files === 1 ? "" : "s"}`)];
-    if (e.listed) return h("span", { class: "muted", title: "The size the list gives; the share's own size shows once it has been opened" }, e.listed, h("div", { class: "faint small" }, "listed"));
-    return h("span", { class: "faint" }, "—");
+  // health and status in one column: a download, what's on disk or a problem first; otherwise
+  // the health, which app.css greys out when it's fine (Found, Verified)
+  function stateCell(e) {
+    const j = e.job, g = e.got, v = e.health && e.health.verdict;
+    const bad = ["gone", "missing", "partial", "error"].includes(v);
+    if ((j && (ACTIVE.has(j.state) || j.state === "failed")) || (g && (g.complete || g.files))) return h("span", { class: "nowrap" }, statusCell(e), bad ? [" ", healthChip(e.health)] : null);
+    return e.health && e.health.verdict ? healthChip(e.health) : null;
+  }
+
+  function sizeCell(e) {   // one line: the share's own size once opened (files in the tooltip), else the list's
+    return e.share ? h("span", { title: `${e.share.files.toLocaleString()} files` + (e.listed ? ` · listed as ${e.listed}` : "") }, fmtBytes(e.share.size))
+      : e.listed ? h("span", { class: "faint", title: "The size the list gives; the share's own size shows once it has been opened" }, e.listed) : null;
   }
 
   // the link check: how far it is, or an offer to check the entries nothing is known about
@@ -904,15 +920,13 @@ async function pageCatalog() {
             launchers(e).map((t) => tagChip("launcher", t)), devices(e).map((t) => tagChip("device", t)),
             e.source && data.sources.length > 1 ? h("span", { class: "chip plain" }, e.source) : null,
             e.sku ? h("span", { class: "faint mono adv" }, e.sku) : null,
-            webLink(e.info) ? h("a", { href: e.info, target: "_blank", rel: "noopener noreferrer", title: e.info }, icon("ext")) : null),
-          insideLine(e.inside)),
+            webLink(e.info) ? h("a", { href: e.info, target: "_blank", rel: "noopener noreferrer", title: e.info }, icon("ext")) : null,
+            insideShort(e.inside))),
         h("td", { class: "right nowrap" }, sizeCell(e)),
         h("td", { class: "adv" }, openedCell(e)),
-        h("td", {}, healthChip(e.health)),
-        h("td", {}, statusCell(e)),
+        h("td", {}, stateCell(e)),
         h("td", { class: "act" },
-          h("button", { class: "btn sm", title: "Browse files, check availability, stream", onclick: () => openShare({ catalog_id: e.id }).catch(fail) }, icon("folder"), "Browse"),
-          " ", h("button", { class: "btn sm ghost icon", title: "Download this share… (shows what it takes first)", onclick: () => downloadEntries([e], () => load()).catch(fail) }, icon("download"))));
+          h("button", { class: "btn sm ghost icon", title: "Download this share… (shows what it takes first)", onclick: () => downloadEntries([e], () => load()).catch(fail) }, icon("download"))));
     }));
     head.checked = vis.length > 0 && vis.every((e) => sel.has(e.id));
     for (const [th, key] of sortHeads) {
@@ -928,7 +942,7 @@ async function pageCatalog() {
       h("span", { class: "adv" }, `${data.entries.filter(opened).length} opened · ${data.entries.filter((e) => e.cached).length} cached`),
       linkLine()] : null);
     dock.classList.toggle("hidden", !selected.length);
-    importBtn.classList.toggle("primary", !selected.length);   // one main action at a time
+    addBtn.classList.toggle("primary", !total);   // the way in, while there's nothing yet
     if (selected.length) {
       put(dock, h("b", {}, `${selected.length} selected`), h("span", { class: "muted" }, fmtBytes(selected.reduce((a, e) => a + size(e), 0))),
         h("span", { class: "grow" }),
@@ -968,13 +982,13 @@ async function pageCatalog() {
   every(4000, () => { if (!document.hidden && !$(".modal-back")) load().catch(() => {}); });
 }
 
-// insideLine: a build's systems and game counts, in a catalog row
-function insideLine(sys) {
+// insideShort: a build's games in a catalog row, "7,628 games · 16 systems", the systems one by
+// one in its tooltip
+function insideShort(sys) {
   if (!sys || !sys.length) return null;
   const total = sys.reduce((a, x) => a + x.games, 0);
-  const top = sys.slice(0, 4).map((x) => `${x.name} ${x.games.toLocaleString()}`).join(" · ");
-  return h("div", { class: "t3", title: sys.map((x) => `${x.name}: ${x.games.toLocaleString()}`).join("\n") },
-    h("b", {}, `${total.toLocaleString()} games`), ` in ${sys.length} system${sys.length === 1 ? "" : "s"}: ${top}${sys.length > 4 ? ` · +${sys.length - 4} more` : ""}`);
+  return h("span", { class: "insd", title: sys.map((x) => `${x.name}: ${x.games.toLocaleString()}`).join("\n") },
+    `${total.toLocaleString()} games · ${sys.length} system${sys.length === 1 ? "" : "s"}`);
 }
 
 // ---------------------------------------------------------------- search
@@ -1062,27 +1076,31 @@ async function pageSearch() {
 
   // each result's Download button says where it goes. On the computer running usnfetch, one
   // file small enough goes to the browser's downloads; from another computer (usnfetch on a
-  // NAS or a mini-PC) it goes to usnfetch's download folder. The other way is a link under it.
-  // Anything bigger goes to the download folder, through the review.
+  // NAS or a mini-PC) it goes to usnfetch's download folder. The other way is in the menu on
+  // its arrow. Anything bigger goes to the download folder, through the review. A plain button:
+  // a page of results isn't a page of main actions.
   const what = (count, size) => (count > 1 ? `${count.toLocaleString()} files · ` : "") + fmtBytes(size);
   function actions(o) {   // o: { browser: fn | null, queue: fn, what }
     const toBrowser = !!(o.browser && SESSION.local);
     // one action at a time: a second click (or the other way) while one runs does nothing
-    const one = (el, fn) => { if (!box.classList.contains("busy")) { box.classList.add("busy"); busy(el, fn).finally(() => box.classList.remove("busy")); } };
-    const main = h("button", { class: "btn sm primary", onclick: () => one(main, toBrowser ? o.browser : o.queue) }, icon("download"), "Download");
+    const one = (el, fn) => { const bx = el.closest(".gm-act") || el; if (!bx.classList.contains("busy")) { bx.classList.add("busy"); busy(el, fn).finally(() => bx.classList.remove("busy")); } };
+    const main = h("button", { class: "btn sm", onclick: () => one(main, toBrowser ? o.browser : o.queue) }, icon("download"), "Download");
     const there = libCount ? "a library or the download folder" : "the download folder";   // the review picks which
-    const other = o.browser ? h("a", { class: "small", href: "#", onclick: (ev) => { ev.preventDefault(); one(other, toBrowser ? o.queue : o.browser); } },
-      toBrowser ? "or to " + there : "or save on this device") : null;
-    const box = h("div", { class: "gm-act" }, main, h("div", { class: "faint small nowrap" }, (toBrowser ? "in your browser" : "to " + there) + " · " + o.what), other);
-    return box;
+    const caret = o.browser ? h("button", { class: "btn sm caret", title: "Other ways to download", "aria-label": "Other ways to download",
+      onclick: (ev) => menu(ev.currentTarget, [[toBrowser ? `To ${there}…` : "Save on this device", () => one(main, toBrowser ? o.queue : o.browser)]]) }, icon("chevd")) : null;
+    return h("div", { class: "gm-act" }, h("div", { class: "splitbtn" }, main, caret),   // under it, how big and where it goes
+      h("div", { class: "faint small nowrap" }, o.what + " · " + (toBrowser ? "to this browser" : libCount ? "to a library or folder" : "to the download folder")));
   }
-  // which build it comes from (the one whose index is at hand first), and a way to open it there
+  // which build it comes from (the one whose index is at hand first): its name opens it at this
+  // folder; with more than one, a plain menu picks which, and a folder icon opens it
   function fromLine(builds, cur, pick, folder) {
-    const open = h("a", { href: "#", title: "Open the build at this folder", onclick: (ev) => { ev.preventDefault(); go(cur(), folder(cur())); } }, "open it there");
-    if (builds.length === 1) return h("div", { class: "gm-b faint small" }, "from ", h("span", { class: "muted" }, builds[0].title), " · ", open);
-    const sel = h("select", { class: "input from", "aria-label": "Which build to download it from", onchange: () => pick(builds[+sel.value]) },
-      builds.map((x, i) => h("option", { value: i, selected: x === cur() }, short(x.title, 44) + (x.size ? " · " + fmtBytes(x.size) : ""))));
-    return h("div", { class: "gm-b faint small" }, `in ${builds.length} builds · from `, sel, " · ", open);
+    const openIt = (ev) => { ev.preventDefault(); go(cur(), folder(cur())); };
+    if (builds.length === 1) return h("div", { class: "gm-b faint small" }, "from ", h("a", { class: "bname", href: "#", title: "Open the build at this folder", onclick: openIt }, builds[0].title));
+    const sel = h("select", { class: "input from bare", "aria-label": "Which build to download it from", onchange: () => pick(builds[+sel.value]) },
+      builds.map((x, i) => h("option", { value: i, selected: x === cur() }, short(x.title, 44))));
+    return h("div", { class: "gm-b faint small" }, "from ", sel,
+      h("a", { class: "btn ghost icon xs", href: "#", title: "Open the build at this folder", "aria-label": "Open the build at this folder", onclick: openIt }, icon("folder")),
+      h("span", {}, `${builds.length} builds have it`));
   }
 
   const gameRow = (g) => {
@@ -1311,6 +1329,7 @@ async function reviewDownload(s, sel, done, more = {}) {
   showSpace();
   function showQueue() {   // everything already there and skipped: nothing to queue
     const nothing = allThere && existing === "skip";
+    showOpt();
     nothingNote.classList.toggle("hidden", !nothing);
     showSpace();
     if (queueBtn && !lib) { queueBtn.disabled = nothing; queueBtn.textContent = nothing ? "Nothing to download" : over && !plan.min_free_gb ? "Queue anyway" : "Queue download"; }
@@ -1358,13 +1377,21 @@ async function reviewDownload(s, sel, done, more = {}) {
   const libs = plan.libraries || [];
   let lib = libs.some((l) => l.id === store.get("dl.saveto", "")) ? store.get("dl.saveto", "") : "";
   let inst = null;
+  // where the files go and how many are there already, in view; the folder's name, archives and
+  // files already there (rarely changed) under Options, which says what they're set to
+  const optSum = h("span", { class: "faint" });
+  const showOpt = () => { optSum.textContent = [found.length ? { off: "archives kept as they are", sets: "RAR and multi-part sets extracted", all: "every archive extracted" }[mode] : null,
+    haveChoices.classList.contains("hidden") ? null : { skip: "files already there skipped", verify: "files already there checked", redownload: "files already there downloaded again" }[existing]].filter(Boolean).join(" · ") || "folder name"; };
   const folderPart = h("div", { class: "stack tight" },
-    h("div", { class: "form tight" }, h("label", { class: "k" }, "Folder"), name),
-    h("div", {}, h("div", { class: "k2" }, "Files go to"), dest),
-    found.length ? h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · this selection has " + found.join(", "))), choices,
-      plan.delete_archives ? h("div", { class: "help" }, "Archives that extract cleanly are deleted afterwards (Settings → Downloads).") : null) : null,
-    h("div", {}, h("div", { class: "k2" }, "Files already there", haveLine), haveChoices),
-    nothingNote);
+    h("div", {}, h("div", { class: "k2" }, "Files go to", haveLine), dest),
+    nothingNote,
+    h("details", { class: "more opts", onchange: showOpt }, h("summary", {}, "Options · ", optSum),
+      h("div", { class: "stack tight" },
+        h("div", { class: "form tight" }, h("label", { class: "k" }, "Folder"), name),
+        found.length ? h("div", {}, h("div", { class: "k2" }, "Archives", h("span", { class: "muted" }, " · this selection has " + found.join(", "))), choices,
+          plan.delete_archives ? h("div", { class: "help" }, "Archives that extract cleanly are deleted afterwards (Settings → Downloads).") : null) : null,
+        h("div", {}, h("div", { class: "k2 hv" }, "Files already there"), haveChoices))));
+  showOpt();
   const libPart = h("div", { class: "stack tight hidden" });
   const saveTo = libs.length ? h("select", { class: "input", "aria-label": "Save to", onchange: () => { lib = saveTo.value; store.set("dl.saveto", lib); showTarget(); } },
     h("option", { value: "", selected: !lib }, "The download folder"), libs.map((l) => h("option", { value: l.id, selected: lib === l.id }, `${l.name} (${l.kind})`))) : null;
@@ -1503,7 +1530,8 @@ async function renderShare(s, path) {
   const sid = s.id, info = s.info || {}, cat = s.catalog;
   setTitle(shareTitle(s), "Catalog", "#/catalog");
   if (basket.all[sid] && basket.all[sid].title !== shareTitle(s)) { basket.all[sid].title = shareTitle(s); basket.save(); }
-  const allBtn = h("button", { class: "btn primary", onclick: () => reviewDownload(s, null).catch(fail) }, icon("download"), "Download all…");
+  // the whole build is rarely what's wanted: a plain button; the dock's Review & download is the main one
+  const allBtn = h("button", { class: "btn", onclick: () => reviewDownload(s, null).catch(fail) }, icon("download"), "Download all…");
   const addBtn = cat ? null : h("button", { class: "btn", title: "Keep this share in the catalog", onclick: async () => {
     try { await api("/catalog/add", { body: { sid } }); toast("Added to the catalog", "ok"); addBtn.remove(); s = await api("/shares/" + sid); } catch (e) { fail(e); }
   } }, icon("plus"), "Add to catalog");
@@ -1515,9 +1543,9 @@ async function renderShare(s, path) {
   const leaf = path ? path.split("/").pop() : "";
   let view = store.get("view." + sid, null), galleryKind = "";
   let hideHave = store.get("hidehave", false);
-  const viewSw = h("div", { class: "seg hidden" },
-    h("button", { class: "btn sm", title: "List", onclick: () => setView("list") }, icon("list"), "List"),
-    h("button", { class: "btn sm", title: "Box art", onclick: () => setView("gallery") }, icon("grid"), "Gallery"));
+  const viewSw = h("div", { class: "seg hidden" },   // icons only: the tooltips name them
+    h("button", { class: "btn sm", title: "List", "aria-label": "List", onclick: () => setView("list") }, icon("list")),
+    h("button", { class: "btn sm", title: "Box art", "aria-label": "Box art", onclick: () => setView("gallery") }, icon("grid")));
   let ssort = store.get("share.sort", "name");
   const sortSel = h("select", { class: "input sm", title: "Sort", onchange: () => setSort(sortSel.value) },
     [["name", "Name"], ["size-desc", "Largest first"], ["size-asc", "Smallest first"]].map(([v, l]) => h("option", { value: v, selected: ssort === v }, l)));
@@ -1534,7 +1562,16 @@ async function renderShare(s, path) {
     if (mode === "search") runSearch(); else load();
   }
   showSort();
-  const hideBox = h("input", { type: "checkbox", checked: hideHave, onchange: () => { hideHave = hideBox.checked; store.set("hidehave", hideHave); if (mode === "search") runSearch(); else load(); } });
+  const hideBox = h("input", { type: "checkbox", checked: hideHave, onchange: () => { hideHave = hideBox.checked; store.set("hidehave", hideHave); showHide(); if (mode === "search") runSearch(); else load(); } });
+  // Sort and "Hide what I have" under one View button; while hiding, a chip says so (and undoes it)
+  const hideLbl = h("label", { class: "check", title: "Hide files that are already in your download folder" }, hideBox, "Hide what I have");
+  const viewDot = h("span", { class: "badge hidden" }, "1");
+  const viewBtn = h("button", { class: "btn sm", "aria-haspopup": "dialog", title: "Sort, and hide what you have",
+    onclick: () => popover(viewBtn, h("div", { class: "form filters" }, h("label", { class: "k" }, "Sort by"), sortSel, h("div", { class: "full" }, hideLbl))) }, icon("filter"), "View", viewDot);
+  const hideChip = h("span", { class: "chip plain fchip hidden" }, "Hiding what you have",
+    h("button", { type: "button", class: "x", title: "Show everything", "aria-label": "Show what you have too", onclick: () => { hideBox.checked = false; hideBox.dispatchEvent(new Event("change")); } }, icon("x")));
+  function showHide() { viewDot.classList.toggle("hidden", !hideHave); hideChip.classList.toggle("hidden", !hideHave); }
+  showHide();
   let scopeAll = !path || path === loneTop.get(sid);   // at the share's start: search all of it
   let listAll = false;   // a kind was just picked with the box empty: list every one of them here
   const q = h("input", { class: "input", type: "search", placeholder: scopeAll ? "Search this share…" : `Search in ${leaf}…`, autocomplete: "off",
@@ -1548,7 +1585,7 @@ async function renderShare(s, path) {
   // list. Picking a kind with the box empty lists every one of them here.
   const kindWord = { games: "games", bios: "BIOS files", video: "videos", picture: "pictures", music: "music", document: "documents", archive: "archives" };
   const kindPref = store.get("share.kind", "games");   // one the build doesn't have: All files
-  const kindSel = h("select", { class: "input sm", "aria-label": "Search for", title: "What to search for",
+  const kindSel = h("select", { class: "input mode", "aria-label": "Search for", title: "What to search for",
     onchange: () => { store.set("share.kind", kindSel.value); listAll = !!kindSel.value && !q.value.trim(); q.placeholder = searchHint(); schedule(0); } },
     [["", "All files"], ...((info.inside || []).length ? [["games", "Games"]] : []),
       ...(info.bios_n > 0 || (info.bios_n == null && (info.inside || []).length) ? [["bios", "BIOS"]] : []),
@@ -1566,9 +1603,11 @@ async function renderShare(s, path) {
     thSize, h("th", {}, ""), h("th", { class: "act" }, ""))), tbody));
   const foot = h("div", { class: "countline", style: { marginTop: "10px" } });
   const grid = h("div", { class: "gallery hidden" });
-  $("#view").replaceChildren(summary, h("div", { class: "browsebar" }, crumbs, viewSw, galAllLbl,
-    sortSel, h("label", { class: "check", title: "Hide files that are already in your download folder" }, hideBox, "Hide what I have"),
-    h("div", { class: "search" }, icon("search"), q), kindSel), listing, grid, foot, dock);
+  // the path on a line of its own; then what to search for and the words, as on the Search page;
+  // the rest at the end
+  $("#view").replaceChildren(summary, h("div", { class: "crumbrow" }, crumbs),
+    h("div", { class: "browsebar b2" }, h("div", { class: "search-bar sb2" }, kindSel, h("div", { class: "search" }, icon("search"), q)),
+      hideChip, h("span", { class: "grow" }), galAllLbl, viewSw, viewBtn), listing, grid, foot, dock);
 
   // ---- the share in one line; the rest under Details
   let detailsOpen = store.get("sharedetails", false);
@@ -1614,6 +1653,8 @@ async function renderShare(s, path) {
       (insideAll ? sys : sys.slice(0, 12)).map((x) => h("a", { class: "chip plain sys", title: `Open ${x.folder}`, href: `#/share/${sid}/${x.folder.split("/").map(encodeURIComponent).join("/")}` },
         x.name, h("span", { class: "faint" }, " " + x.games.toLocaleString()))),
       !insideAll && sys.length > 12 ? h("a", { class: "chip plain sys", href: "#", onclick: (ev) => { ev.preventDefault(); insideAll = true; renderSummary(); } }, `+${sys.length - 12} more`) : null) : null;
+    const atTop = !path || path === loneTop.get(sid);
+    if (!atTop) return put(summary, listNote);   // in a folder: the folder is the subject
     put(summary, listNote, h("div", { class: "sum-line" },
       h("b", {}, fmtBytes(info.size)), cat && cat.listed ? h("span", { class: "faint" }, `(listed as ${cat.listed})`) : null,
       h("span", {}, `${(info.files || 0).toLocaleString()} files`), avail, h("span", { class: "grow" }),
@@ -1703,7 +1744,6 @@ async function renderShare(s, path) {
     galAll.checked = free.length > 0 && free.every((b) => b.cb.checked) && boxes.length > 0;
     const t = basket.totals(sid);
     dock.classList.toggle("hidden", !t.n);
-    allBtn.classList.toggle("primary", !t.n);    // one main action at a time
     if (!t.n) { drawer = false; return; }
     const nf = keys.filter((k) => items[k].folder).length, nx = t.n - nf;
     const what = [nf ? `${nf.toLocaleString()} folder${nf === 1 ? "" : "s"}` : "", nx ? `${nx.toLocaleString()} file${nx === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
@@ -2041,8 +2081,8 @@ const providerTrouble = (d) => /username or password|can't find the server|refus
 let pendingActivityAction = null;   // "add": open Add links once the page is shown
 async function pageActivity() {
   setTitle("Activity");
-  const pauseBtn = h("button", { class: "btn" }, icon("pause"), "Pause all");
-  toolbar(pauseBtn, h("button", { class: "btn primary", onclick: addLinksDialog }, icon("plus"), "Add links"));
+  // (Pause and the speed limit are in the status bar, on every page)
+  toolbar(h("button", { class: "btn primary", onclick: addLinksDialog }, icon("plus"), "Add links"));
   const banner = h("div", { class: "hidden" });
   const qbox = h("div", { class: "panel" }), hbox = h("div", { class: "tablewrap" });
   const qsum = h("span", { class: "muted small" });   // the queue in all: jobs, what's left, speed and ETA
@@ -2051,14 +2091,11 @@ async function pageActivity() {
 
   function renderThrottle(th) {
     th = th || {};
-    put(pauseBtn, [icon("pause"), "Pause all"]);
-    pauseBtn.onclick = () => pausePrompt().catch(fail);
-    pauseBtn.classList.toggle("hidden", !!th.paused);   // paused: the banner's Resume is the one way back
-    banner.classList.toggle("hidden", !th.paused && !th.limit);
+    banner.classList.toggle("hidden", !th.paused);   // paused: why nothing moves, and the way back
     put(banner, th.paused
       ? h("div", { class: "note warn bar-note" }, icon("pause"), h("span", { class: "grow" }, `${throttleText(th)}. Downloads wait in the queue and carry on when resumed.`),
         h("button", { class: "btn sm", onclick: () => resumeAll().catch(fail) }, icon("play"), "Resume now"))
-      : th.limit ? h("div", { class: "note bar-note" }, icon("gauge"), h("span", { class: "grow" }, `${throttleText(th)}.`), h("a", { href: "#/settings" }, "Speed settings")) : null);
+      : null);
   }
 
   const act = (fn) => async () => { try { await fn(); refresh(); } catch (e) { fail(e); } };
@@ -2497,7 +2534,7 @@ async function pageSettings() {
   const [advIn, advSw] = sw(UI.advanced);
   advIn.addEventListener("change", () => setUI("advanced", advIn.checked));
   toolbar(h("label", { class: "check adv-toggle", title: "Show the settings and details most people never need" }, advSw, "Show advanced"),
-    h("a", { class: "btn", href: "#/setup" }, "Run setup again"));
+    h("a", { class: "btn adv", href: "#/setup" }, "Run setup again"));
   const def = s.defaults || {};
   const chg = (k) => (k in def && (s[k] || "") !== (def[k] || "") ? "changed" : "");   // differs from its default
   const panel = (id, ic, title, extra, ...body) => {
@@ -2536,7 +2573,7 @@ async function pageSettings() {
       : h("div", { class: "note warn" }, "No Usenet provider yet: add one, import them from SABnzbd, or ", h("a", { href: "#/setup/providers" }, "run the setup"), "."));
   }
   const accounts = panel("providers", "server", "Usenet providers", [
-    h("button", { class: "btn", onclick: () => sabImportDialog(s.sab_ini, (sv) => { s = sv; renderAccounts(); }) }, "Import from SABnzbd"),
+    h("button", { class: "btn" + (s.accounts.length ? " adv" : ""), onclick: () => sabImportDialog(s.sab_ini, (sv) => { s = sv; renderAccounts(); }) }, "Import from SABnzbd"),   // once there's a provider: rarely
     h("button", { class: "btn", onclick: () => providerDialog(null, (p) => saveAccounts([...s.accounts, p], "new")) }, icon("plus"), "Add provider")],
     accBody, h("div", { class: "help" + (s.accounts.length > 1 ? "" : " adv"), style: { marginTop: "10px" } }, h("b", {}, "Priority: "), PRIORITY_HELP));
 
@@ -2608,11 +2645,11 @@ async function pageSettings() {
   function renderLibs() {
     put(libBody, s.libraries.length
       ? h("div", { class: "tablewrap" }, h("table", { class: "t cardrows" },
-          h("thead", {}, h("tr", {}, h("th", {}, "Library"), h("th", {}, "Kind"), h("th", {}, "Reloads"), h("th", { class: "act" }, ""))),
+          h("thead", {}, h("tr", {}, h("th", {}, "Library"), h("th", {}, "Kind"), h("th", { class: "adv" }, "Reloads"), h("th", { class: "act" }, ""))),
           h("tbody", {}, s.libraries.map((l) => h("tr", {},
             h("td", { class: "title-cell" }, h("div", { class: "t1", style: { fontWeight: 600 } }, l.name), h("div", { class: "faint mono" }, l.path)),
             h("td", {}, LIB_KINDS[l.kind] || l.kind),
-            h("td", { class: "muted small" }, l.refresh ? h("span", { class: "mono", title: "usnfetch calls this after adding games, so the front-end reloads its game lists" }, l.refresh) : "—"),
+            h("td", { class: "muted small adv" }, l.refresh ? h("span", { class: "mono", title: "usnfetch calls this after adding games, so the front-end reloads its game lists" }, l.refresh) : "—"),
             h("td", { class: "act" },
               h("button", { class: "btn sm ghost icon", title: "Edit", onclick: () => libraryDialog(l, (x) => saveLibs(s.libraries.map((y) => (y.id === l.id ? x : y)))) }, icon("edit")),
               h("button", { class: "btn sm ghost icon danger", title: "Remove (its games stay)", onclick: async () => {
@@ -2677,12 +2714,10 @@ async function pageSettings() {
     const group = (key, label, options) => [h("label", { class: "k" }, label), h("div", { class: "tiles" }, options.map(([v, name, pv]) =>
       h("button", { class: "tile" + (UI[key] === v ? " on" : ""), type: "button", "aria-pressed": UI[key] === v ? "true" : "false",
         onclick: () => { setUI(key, v); renderAppearance(); } }, pv, h("span", {}, name))))];
-    const mini = (cls) => h("div", { class: "pv " + cls }, h("i", { class: "n" }), h("i", { class: "m" }, h("b"), h("b"), h("b")));
     // a theme's tile: a small menu and page in that theme's own colours
     const themePv = (t) => h("div", { class: "pv theme", "data-theme": t }, h("i", { class: "n" }), h("i", { class: "m" }, h("b"), h("b"), h("b")));
     put(appearance, h("div", { class: "head" }, icon("grid"), h("h2", {}, "Appearance"), h("span", { class: "grow" }), h("span", { class: "faint", style: { fontSize: "12.5px" } }, "Saved in this browser")),
       h("div", { class: "body" }, h("div", { class: "form" },
-        ...group("layout", "Menu", [["side", "Full menu", mini("side")], ["rail", "Icons only", mini("rail")]]),
         ...group("theme", "Theme", [["dark", "Dark", themePv("dark")], ["light", "Light", themePv("light")], ["system", "Match the system", h("div", { class: "pv sw system" })]]),
         ...group("theme", "Console colours", THEMES.slice(2).map(([v, name]) => [v, name, themePv(v)])),
         ...(canBrowserNotify() ? [h("label", { class: "k" }, "Browser notifications"), h("div", {},

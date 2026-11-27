@@ -764,3 +764,73 @@ a.sb-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
 
 /* a game's console or a BIOS file's label, under its name in a share's Games / BIOS search */
 .name-cell .nmwrap .kindchip { justify-self: start; margin: 2px 0; }
+
+/* ---- the quiet look: colour only where something needs you; surfaces separate by tone, not by
+   outlines */
+/* chips become text: status colour stays, the pill and its outline go */
+.chip:not(.fchip) { height: auto; padding: 0; border: 0; background: none; border-radius: 0; font-weight: 600; letter-spacing: 0; font-size: 12.5px; }
+.chip.plain, .chip.tag { color: var(--muted); font-weight: 500; }
+.chip.tag.launcher { color: var(--muted); }
+.chip.tag:hover, .chip.tag:focus-visible { color: var(--text); text-decoration: underline; }
+/* health that's fine is grey: only a problem gets colour */
+.chip.hl-link_ok, .chip.hl-available { color: var(--faint); font-weight: 500; }
+.chip.hl-link_ok .dot { color: var(--faint); }
+.chip.hl-available .dot { color: var(--ok); }
+/* a row's details on one line, with dots between */
+.title-cell .t2 { gap: 0 7px; }
+.title-cell .t2 > :not(:first-child)::before { content: "·"; margin-right: 7px; color: var(--faint); font-weight: 400; text-decoration: none; display: inline-block; }
+.title-cell .t2 .insd { color: var(--faint); }
+/* the cached-index edge belongs to advanced mode (the Opened column says what it means) */
+:root:not([data-advanced="on"]) table.t tr.seen td:first-child { box-shadow: none; }
+/* fewer outlines: tables and panels sit on their own tone */
+.tablewrap, .panel, .card, .sum-line { border-color: transparent; }
+table.t td { border-bottom-color: color-mix(in srgb, var(--border-soft) 70%, transparent); }
+.title-cell a.t1:hover { color: var(--accent); text-decoration: none; }
+/* secondary buttons: an outline, no fill, so the one main button stands out */
+.btn:not(.primary):not(.ghost):not(.solid) { background: transparent; }
+.seg .btn.on { background: var(--panel-2); }
+/* box art: what you have is a small tick, not a label on every cover */
+.gcard .art .chip { position: absolute; left: 6px; top: 6px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--panel) 88%, transparent); }
+.gcard .art .chip.ok { font-size: 0; gap: 0; width: 22px; height: 22px; padding: 0; justify-content: center; background: var(--ok); color: var(--bg); }
+.gcard .art .chip.ok svg.i { width: 13px; height: 13px; stroke-width: 3; }
+/* the build's systems: a line of links, not a wall of pills */
+.inside-chips { gap: 4px 14px; }
+.chip.sys { color: var(--text); font-weight: 550; }
+.chip.sys:hover { color: var(--accent); }
+/* phones: the catalog's card rows (the edge used to land on the checkbox) */
+@media (max-width: 600px) { table.t.cardrows td.act { margin-left: auto; } }
+.title-cell .t2 .chip { gap: 0; }
+
+/* ---- a build's page: the path on its own line, then [kind | search] and the view controls */
+.crumbrow { margin: 2px 0 10px; }
+.crumbrow .crumbs { margin: 0; font-size: 15px; }
+.crumbrow .crumbs a { padding: 3px 5px; }
+.browsebar.b2 { flex-wrap: nowrap; gap: 10px; }
+.search-bar.sb2 { flex: 1 1 auto; max-width: 620px; gap: 0; }
+.sb2 select.mode { height: 34px; border-radius: var(--radius-sm) 0 0 var(--radius-sm); border-right: 0; font-weight: 600; padding-right: 6px; }
+.sb2 .search { flex: 1; }
+.browsebar.b2 .sb2 .search .input { width: 100%; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.b2 .seg .btn { padding: 0 9px; }
+.b2 .btn.sm { height: 30px; }
+@media (max-width: 860px) {
+  .browsebar.b2 { flex-wrap: wrap; }
+  .search-bar.sb2 { flex-basis: 100%; max-width: none; }
+  .browsebar.b2 .sb2 .search, .browsebar.b2 .sb2 .search .input { width: 100%; }
+}
+.sharesum:empty { display: none; }
+
+/* ---- one main button per screen: Search's split Download button, the review's Options */
+.splitbtn { display: inline-flex; }
+.splitbtn .btn:first-child:not(:last-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.splitbtn .btn.caret { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; width: 26px; padding: 0; justify-content: center; }
+.splitbtn .btn.caret svg.i { width: 14px; height: 14px; }
+.gm-act .splitbtn .btn.caret { min-width: 0; }
+.gm-act .splitbtn .btn:first-child { min-width: 0; }
+.gm-b select.from.bare { border-color: transparent; background: transparent; color: var(--muted); padding: 0 2px; height: 24px; font-size: 12.5px; max-width: 300px; }
+.gm-b select.from.bare:hover, .gm-b select.from.bare:focus { border-color: var(--border); }
+.gm-b a.bname { color: var(--muted); }
+.gm-b a.bname:hover { color: var(--accent); }
+.gm-b .btn.icon.xs { color: var(--faint); }
+details.opts > summary { color: var(--text); font-size: 13px; }
+details.opts > summary .faint { font-size: 12.5px; }
+div:has(> .choices.hidden) > .k2.hv { display: none; }
