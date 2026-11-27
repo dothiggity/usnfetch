@@ -925,7 +925,8 @@ async function pageCatalog() {
         h("td", { class: "right nowrap" }, sizeCell(e)),
         h("td", { class: "adv" }, openedCell(e)),
         h("td", {}, stateCell(e)),
-        h("td", { class: "act" },
+        h("td", { class: "act" },   // Browse says what the title does too, for anyone who wouldn't think to click it
+          h("button", { class: "btn sm ghost", title: "Browse files, check availability, stream", onclick: () => openShare({ catalog_id: e.id }).catch(fail) }, icon("folder"), "Browse"), " ",
           h("button", { class: "btn sm ghost icon", title: "Download this share… (shows what it takes first)", onclick: () => downloadEntries([e], () => load()).catch(fail) }, icon("download"))));
     }));
     head.checked = vis.length > 0 && vis.every((e) => sel.has(e.id));
