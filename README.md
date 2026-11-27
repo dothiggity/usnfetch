@@ -4,9 +4,9 @@ usnfetch downloads `usn://` links from your own Usenet provider. Each link opens
 collection of files, encrypted and posted to Usenet. usnfetch runs in the background with a web
 page you keep open in a tab, like SABnzbd or the *arr apps.
 
-I wanted that for `usn://` links. Getting a share into SABnzbd meant a bridge app that never quite
-worked, so usnfetch does the whole job itself. It fetches the articles, decrypts them and checks
-every file against the share's SHA-256.
+I wanted that for `usn://` links. Getting a share into SABnzbd meant a bridge app, so usnfetch
+does the whole job itself. It fetches the articles, decrypts them and checks every file against
+the share's SHA-256.
 
 It's an independent project and doesn't come with any shares. You bring your own links, and what
 you download is up to you.
@@ -31,7 +31,7 @@ you download is up to you.
 
 - A Usenet provider account.
 - The `usn://` links of the shares you want.
-- 7-Zip or UnRAR, if you want RAR sets unpacked.
+- 7-Zip or UnRAR (on Linux, the `7zip` package), if you want archives unpacked.
 - Windows 10 or 11, Linux (64-bit, including a Raspberry Pi 4 or 5), or a Mac with Apple silicon
   (that one's untested).
 
@@ -62,9 +62,9 @@ Settings, the catalog and your downloads stay. The release notes say if anything
 ## Good to know
 
 - **Downloads** get a folder per share in your download folder. A single `.zip` or `.7z` stays
-  zipped, RAR sets get unpacked. You can change both per download.
-- **Search** only knows the builds you've opened or downloaded. Each result's Download button
-  says where the file goes.
+  zipped, RAR sets get unpacked. You can change both under Options when you download.
+- **Search** only knows the builds you've opened or downloaded. The line under each Download
+  button says where it goes, and its arrow has the other way.
 - **Libraries** are the devices you play on. Add each one in Settings → Libraries and give it a
   name, like "Living room PC". When you download, pick it under Save to. Games go into that
   device's folder for their system, BIOS files into its BIOS folder.
@@ -96,14 +96,18 @@ On Linux, a systemd unit like this runs it as a service:
     ExecStart=/opt/usnfetch/usnfetch serve --data /srv/usnfetch --host 0.0.0.0
     Restart=on-failure
 
+    [Install]
+    WantedBy=multi-user.target
+
 ## Where it keeps things
 
-One data folder: `%LOCALAPPDATA%\usnfetch` on Windows, `~/.local/share/usnfetch` on Linux, or
-wherever `--data` says. An empty file called `portable` next to `usnfetch.exe` keeps it beside
-the program instead.
+One data folder: `%LOCALAPPDATA%\usnfetch` on Windows, `~/.local/share/usnfetch` on Linux,
+`~/Library/Application Support/usnfetch` on a Mac, or wherever `--data` says. An empty file
+called `portable` next to `usnfetch.exe` keeps it beside the program instead.
 
-Each share you open leaves its index there (about 100 MB per TB), so it opens instantly next time.
-It keeps up to 20 GB of them.
+Each share you open leaves its index there (about 100 MB per TB), so it opens in seconds next
+time. It keeps up to 20 GB of full indexes (an advanced setting). Past that, older ones keep just
+their file list.
 
 Provider passwords are encrypted on Windows. On Linux and macOS they're in the settings file,
 which only your user can read.
@@ -133,6 +137,11 @@ You need Go 1.27:
     go build -o bin/usnfetch.exe ./cmd/usnfetch
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the tests, the code layout and how releases are made.
+
+## Bugs and security
+
+Found a bug? Open an issue. For a security problem, use Report a vulnerability on the Security tab
+instead, so it isn't public.
 
 ## License
 
