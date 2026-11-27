@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -290,5 +291,18 @@ func TestSameShare(t *testing.T) {
 	}
 	if share.LinkKey("usn://AAAA") != "" || share.LinkKey("not a link") != "" {
 		t.Error("LinkKey of something that isn't a share link")
+	}
+}
+
+// The System page's Open for the data folder: never for another computer, and a missing
+// folder is an error, not a file manager opening somewhere else. (Nothing here opens a window.)
+func TestRevealDataFolder(t *testing.T) {
+	s := testServer(t)
+	if st, _, _ := s.do(t, call{method: "POST", path: "/api/system/reveal-data", body: "{}", ctype: "application/json", remote: true}); st == 200 {
+		t.Fatal("another computer opened the data folder")
+	}
+	s.M.DataDir = filepath.Join(t.TempDir(), "gone")
+	if st, code, _ := s.do(t, call{method: "POST", path: "/api/system/reveal-data", body: "{}", ctype: "application/json"}); st != 404 || code != "no_folder" {
+		t.Fatalf("missing data folder: %d %q", st, code)
 	}
 }

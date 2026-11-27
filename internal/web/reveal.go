@@ -29,6 +29,20 @@ func openFolder(dir string) error {
 }
 
 func (s *Server) revealRoutes() {
+	// the data folder: settings, catalog, jobs and share indexes (System page)
+	s.api("POST /api/system/reveal-data", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if !isLoopback(r) {
+			return nil, fail(403, "Folders can only be opened on the computer running usnfetch.", "not_local")
+		}
+		dir := s.M.DataDir
+		if st, err := os.Stat(dir); dir == "" || err != nil || !st.IsDir() {
+			return nil, fail(404, "The data folder isn't there.", "no_folder")
+		}
+		if err := openFolder(dir); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "path": dir}, nil
+	})
 	s.api("POST /api/jobs/{id}/reveal", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if !isLoopback(r) {
 			return nil, fail(403, "Folders can only be opened on the computer running usnfetch.", "not_local")

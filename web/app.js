@@ -2795,7 +2795,13 @@ async function pageSystem() {
         ic ? h("div", { class: "card adv", title: ic.path + "\nFull indexes: what downloads, previews and checks use, kept by last use up to the limit in Settings.\nFile lists: what browsing uses, zipped while idle." + (ic.art ? `\nBox art shown so far: ${ic.art} pictures.` : "") },
           h("div", { class: "k" }, "Share index cache"), h("div", { class: "v" }, fmtBytes(ic.on_disk + (ic.art_disk || 0))),
           h("div", { class: "s" }, `${ic.full} full (${fmtBytes(ic.full_disk)} of ${fmtBytes(ic.limit)}) · ${ic.lists} file list${ic.lists === 1 ? "" : "s"} (${fmtBytes(ic.lists_disk)})` + (ic.art ? ` · box art ${fmtBytes(ic.art_disk)}` : ""))) : null,
-        h("div", { class: "card wide" }, h("div", { class: "k" }, "Usenet providers"), h("div", { class: "v", style: { fontSize: "14px", whiteSpace: "normal" } }, st.accounts || "none yet"), h("div", { class: "s adv", title: st.data_dir }, "data: " + st.data_dir)));
+        h("div", { class: "card wide" }, h("div", { class: "k" }, "Usenet providers"), h("div", { class: "v", style: { fontSize: "14px", whiteSpace: "normal" } }, st.accounts || "none yet")),
+        // where it all lives: settings, catalog, jobs and share indexes (Open: on this computer only)
+        st.data_dir ? h("div", { class: "card wide" }, h("div", { class: "k" }, "Data folder"),
+          h("div", { class: "v mono", style: { fontSize: "13px", whiteSpace: "normal", wordBreak: "break-all" } }, st.data_dir,
+            SESSION.local ? h("button", { class: "btn sm ghost", style: { marginLeft: "8px" }, title: "Open it in the file manager",
+              onclick: () => api("/system/reveal-data", { body: {} }).catch(fail) }, icon("folder"), "Open") : null),
+          h("div", { class: "s" }, "Settings, the catalog, the job list and share indexes")) : null);
       const l = await api("/logs?after=" + seq);
       if (l.lines.length) {
         all.push(...l.lines);
