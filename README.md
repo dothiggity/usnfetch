@@ -103,7 +103,8 @@ On Linux, a systemd unit like this runs it as a service:
 
 One data folder: `%LOCALAPPDATA%\usnfetch` on Windows, `~/.local/share/usnfetch` on Linux,
 `~/Library/Application Support/usnfetch` on a Mac, or wherever `--data` says. An empty file
-called `portable` next to `usnfetch.exe` keeps it beside the program instead.
+called `portable` next to `usnfetch.exe` keeps it beside the program instead. Settings and the
+System page show which folder it's using.
 
 Each share you open leaves its index there (about 100 MB per TB), so it opens in seconds next
 time. It keeps up to 20 GB of full indexes (an advanced setting). Past that, older ones keep just
